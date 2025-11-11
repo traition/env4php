@@ -1,5 +1,5 @@
 name: env4php
-description: "A new Flutter project."
+description: "A Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -28,6 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  fluent_ui: ^4.4.0
   flutter:
     sdk: flutter
 
@@ -45,6 +46,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  msix: ^3.16.12
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -55,7 +57,7 @@ flutter:
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
-  uses-material-design: true
+#  uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -87,3 +89,11 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+msix_config:
+  display_name: env4php
+  publisher_display_name: uxyz
+  identity_name: uxyz.flutter.env4php
+  msix_version: 1.0.0.0
+#  logo_path: C:\path\to\logo.png
+  capabilities: internetClient
+  languages: zh_cn
