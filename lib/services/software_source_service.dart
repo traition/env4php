@@ -1,0 +1,177 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+import '../models/software_model.dart';
+
+/// 软件源服务
+class SoftwareSourceService {
+  static const String _localFileName = 'soft.json';
+  static const String _defaultSourceURL = 'https://e4p-conf.pages.dev/soft.json';
+  static String? _sourceURL;
+
+  /// 获取本地软件源文件路径
+  static Future<String> getLocalSourcePath() async {
+    final appDir = await getApplicationSupportDirectory();
+    return '${appDir.path}/$_localFileName';
+  }
+
+  /// 下载软件源（带超时）
+  static Future<bool> downloadSource({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final url = getSourceURL();
+    if (url.isEmpty) {
+      return false;
+    }
+
+    HttpClient? httpClient;
+    try {
+      // 创建 HttpClient，自动使用系统代理
+      httpClient = HttpClient();
+      // 不设置 findProxy，让 HttpClient 自动使用系统代理设置
+
+      final uri = Uri.parse(url);
+      final request = await httpClient.getUrl(uri).timeout(timeout);
+
+      // 设置请求头
+      request.headers.set('Accept', 'application/json');
+      request.headers.set('User-Agent', 'env4php/1.0');
+
+      // 发送请求并获取响应
+      final response = await request.close().timeout(timeout);
+
+
+      if (response.statusCode == 200) {
+        // 读取响应体
+        final bytes = await response.expand((chunk) => chunk).toList();
+        final contentBytes = Uint8List.fromList(bytes);
+
+        // 尝试检测字符编码
+        String content;
+        final contentType = response.headers.value('content-type') ?? '';
+        if (contentType.contains('charset=')) {
+          final charset = contentType.split('charset=')[1].split(';')[0].trim();
+          if (kDebugMode) {
+            print('检测到字符编码: $charset');
+          }
+          try {
+            content = utf8.decode(contentBytes);
+          } catch (e) {
+            // 如果 UTF-8 解码失败，尝试其他编码
+            if (kDebugMode) {
+              print('UTF-8 解码失败，尝试使用原始字节: $e');
+            }
+            content = String.fromCharCodes(contentBytes);
+          }
+        } else {
+          // 默认使用 UTF-8
+          try {
+            content = utf8.decode(contentBytes);
+          } catch (e) {
+            if (kDebugMode) {
+              print('UTF-8 解码失败，使用原始字节: $e');
+            }
+            content = String.fromCharCodes(contentBytes);
+          }
+        }
+
+        final localPath = await getLocalSourcePath();
+        final file = File(localPath);
+        // 使用 UTF-8 编码保存文件
+        await file.writeAsString(content, encoding: utf8);
+
+        httpClient.close();
+        return true;
+      }
+
+      httpClient.close();
+      return false;
+    } catch (e) {
+      if (kDebugMode) {
+        print('下载软件源失败: $e');
+      }
+      // 确保在异常情况下也关闭客户端
+      if (httpClient != null) {
+        try {
+          httpClient.close();
+        } catch (_) {
+          // 忽略关闭错误
+        }
+      }
+      return false;
+    }
+  }
+
+  /// 检查是否有缓存的软件源
+  static Future<bool> hasCachedSource() async {
+    final localPath = await getLocalSourcePath();
+    final file = File(localPath);
+    return await file.exists();
+  }
+
+  /// 从本地缓存文件加载软件源
+  static Future<SoftwareSource?> loadLocalSource({
+    bool isFromCache = false,
+  }) async {
+    try {
+      final localPath = await getLocalSourcePath();
+      final file = File(localPath);
+
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        final json = jsonDecode(content) as Map<String, dynamic>;
+        return SoftwareSource.fromJson(json);
+      }
+
+      return null;
+    } catch (e) {
+      if (kDebugMode) {
+        print('加载软件源失败: $e');
+      }
+      return null;
+    }
+  }
+
+  /// 获取软件源（优先从 URL 下载，失败则使用缓存）
+  static Future<SoftwareSource?> getSource() async {
+    final url = getSourceURL();
+
+    if (kDebugMode) {
+      print('=== 开始获取软件源 ===');
+      print('目标 URL: $url');
+    }
+
+    // 首先尝试从 URL 下载
+    final downloadSuccess = await downloadSource();
+
+    if (downloadSuccess) {
+      // 下载成功，从本地加载
+      if (kDebugMode) {
+        print('下载成功，从本地文件加载');
+      }
+      return await loadLocalSource(isFromCache: false);
+    }
+
+    // 下载失败，尝试从缓存加载
+    if (kDebugMode) {
+      print('下载失败，尝试从缓存加载');
+    }
+    return await loadLocalSource(isFromCache: true);
+  }
+
+  /// 获取软件源 URL
+  static String getSourceURL() {
+    return _sourceURL ?? _defaultSourceURL;
+  }
+
+  /// 设置软件源 URL
+  static void setSourceURL(String? url) {
+    _sourceURL = url;
+  }
+
+  /// 初始化（设置默认 URL）
+  static void initialize() {
+    _sourceURL ??= _defaultSourceURL;
+  }
+}
