@@ -7,6 +7,7 @@ import '../models/software_model.dart';
 import '../services/config_service.dart';
 import '../services/software_source_service.dart';
 import '../services/install_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/storage_path_dialog.dart';
 
 /// 软件管理页面
@@ -126,6 +127,9 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
   bool _isLoading = true;
   int _selectedTabIndex = 0; // 0: 已安装, 1: 服务器, 2: 数据库, 3: PHP, 4: 工具
   List<Software> _installedSoftware = [];
+  // 独立的 Navigator Key，用于限制对话框只显示在当前页面
+  final GlobalKey<NavigatorState> _pageNavigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -144,6 +148,7 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
       if (mounted) {
         final path = await showDialog<String>(
           context: context,
+          useRootNavigator: false, // 不在根 Navigator 中显示，只在 Container 区域显示
           builder: (context) => const StoragePathDialog(),
         );
 
@@ -181,6 +186,71 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
       });
       if (source != null) {
         _refreshInstalledSoftware();
+      }
+    }
+  }
+
+  /// 修改软件源地址
+  Future<void> _changeSourceURL() async {
+    final currentURL = SoftwareSourceService.getSourceURL();
+    final controller = TextEditingController(text: currentURL);
+
+    final pageContext = _pageNavigatorKey.currentContext;
+    if (pageContext == null) return;
+
+    final newURL = await showDialog<String>(
+      context: pageContext,
+      useRootNavigator: false, // 只在当前页面的 Navigator 中显示
+      builder: (context) => AlertDialog(
+        title: const Text('修改软件源地址'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: '软件源 URL',
+            hintText: 'https://example.com/soft.json',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final url = controller.text.trim();
+              if (url.isNotEmpty) {
+                Navigator.of(context).pop(url);
+              }
+            },
+            child: const Text('确定'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop('https://conf.e4p.uxyz.fyi/soft.json');
+            },
+            child: const Text('恢复默认'),
+          ),
+        ],
+      ),
+    );
+
+    if (newURL != null && newURL.isNotEmpty) {
+      SoftwareSourceService.setSourceURL(newURL);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('软件源地址已更新，请重新加载软件源'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        // 重新加载软件源
+        setState(() {
+          _isLoading = true;
+        });
+        await _initialize();
       }
     }
   }
@@ -295,53 +365,86 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 5,
-      initialIndex: _selectedTabIndex,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('软件管理', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 24),
-            // Tab 栏
-            TabBar(
-              isScrollable: true,
-              onTap: (index) {
-                setState(() {
-                  _selectedTabIndex = index;
-                });
-              },
-              tabs: const [
-                Tab(text: '已安装'),
-                Tab(text: '服务器'),
-                Tab(text: '数据库'),
-                Tab(text: 'PHP'),
-                Tab(text: '工具'),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // 软件列表
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _softwareSource == null
-                  ? Center(
-                      child: Text(
-                        '无法加载软件源',
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+    return Navigator(
+      key: _pageNavigatorKey,
+      onGenerateRoute: (settings) {
+        return MaterialPageRoute(
+          builder: (context) => DefaultTabController(
+            length: 5,
+            initialIndex: _selectedTabIndex,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 软件源地址和设置（居右显示）
+                  Row(
+                    children: [
+                      const Spacer(),
+                      Text(
+                        '软件源',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        SoftwareSourceService.getSourceURL(),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Theme.of(
                             context,
                           ).colorScheme.onSurface.withValues(alpha: 0.6),
                         ),
                       ),
-                    )
-                  : _buildSoftwareList(),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.settings),
+                        onPressed: _changeSourceURL,
+                        tooltip: '软件源设置',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  // Tab 栏
+                  TabBar(
+                    isScrollable: true,
+                    onTap: (index) {
+                      setState(() {
+                        _selectedTabIndex = index;
+                      });
+                    },
+                    tabs: const [
+                      Tab(text: '已安装'),
+                      Tab(text: '服务器'),
+                      Tab(text: '数据库'),
+                      Tab(text: 'PHP'),
+                      Tab(text: '工具'),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // 软件列表
+                  Expanded(
+                    child: _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : _softwareSource == null
+                        ? Center(
+                            child: Text(
+                              '无法加载软件源',
+                              style: Theme.of(context).textTheme.bodyLarge
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.6),
+                                  ),
+                            ),
+                          )
+                        : _buildSoftwareList(),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -502,12 +605,14 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (software.byte > 0)
+                    // 已安装tab页不显示大小
+                    if (software.byte > 0 && _selectedTabIndex != 0)
                       Text(
                         _formatBytes(software.byte),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
-                    if (software.byte > 0) const SizedBox(width: 16),
+                    if (software.byte > 0 && _selectedTabIndex != 0)
+                      const SizedBox(width: 16),
                     isInstalled
                         ? (isPgAdmin4
                               ? const Text('已安装')
@@ -545,8 +650,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
   }
 
   void _showInstallDialog(Software software) {
+    final pageContext = _pageNavigatorKey.currentContext;
+    if (pageContext == null) return;
+
     showDialog(
-      context: context,
+      context: pageContext,
+      useRootNavigator: false, // 只在当前页面的 Navigator 中显示
       builder: (context) => AlertDialog(
         title: Text('安装 ${software.name}'),
         content: Text('确定要安装 ${software.name} 吗？'),
@@ -878,8 +987,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
     }
 
     // 显示文本查看器对话框
+    final pageContext = _pageNavigatorKey.currentContext;
+    if (pageContext == null) return;
+
     showDialog(
-      context: context,
+      context: pageContext,
+      useRootNavigator: false, // 只在当前页面的 Navigator 中显示
       builder: (context) => _LogViewerDialog(logFile: logFile),
     );
   }
@@ -942,30 +1055,30 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
     }
 
     // 显示安装进度对话框
+    final pageContext = _pageNavigatorKey.currentContext;
+    if (pageContext == null) return;
+
     showDialog(
-      context: context,
+      context: pageContext,
+      useRootNavigator: false, // 只在当前页面的 Navigator 中显示
       barrierDismissible: false,
       builder: (context) => _InstallProgressDialog(
         software: software,
         category: category,
+        pageNavigatorKey: _pageNavigatorKey,
         onComplete: (success, error) {
           // 不自动关闭对话框，让用户手动关闭
           if (success) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('${software.name} 安装成功'),
-                backgroundColor: Colors.green,
-              ),
+            NotificationService.showSuccess(
+              title: '安装成功',
+              message: '${software.name} 安装成功',
             );
             // 刷新已安装软件列表
             _refreshInstalledSoftware();
           } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(error ?? '${software.name} 安装失败'),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 5),
-              ),
+            NotificationService.showError(
+              title: '安装失败',
+              message: error ?? '${software.name} 安装失败',
             );
           }
         },
@@ -985,8 +1098,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
         _softwareSource != null &&
         _softwareSource!.php.any((s) => s.id == software.id);
 
+    final pageContext = _pageNavigatorKey.currentContext;
+    if (pageContext == null) return;
+
     showDialog(
-      context: context,
+      context: pageContext,
+      useRootNavigator: false, // 只在当前页面的 Navigator 中显示
       builder: (context) => AlertDialog(
         title: Text('管理 ${software.name}'),
         content: SingleChildScrollView(
@@ -1120,8 +1237,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
   }
 
   void _showUninstallDialog(Software software) {
+    final pageContext = _pageNavigatorKey.currentContext;
+    if (pageContext == null) return;
+
     showDialog(
-      context: context,
+      context: pageContext,
+      useRootNavigator: false, // 只在当前页面的 Navigator 中显示
       builder: (context) => AlertDialog(
         title: Text('卸载 ${software.name}'),
         content: const Text('确定要卸载此软件吗？此操作不可恢复。'),
@@ -1135,9 +1256,10 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
               Navigator.of(context).pop();
               // TODO: 实现卸载逻辑
               _refreshInstalledSoftware();
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('已卸载 ${software.name}')));
+              NotificationService.showSuccess(
+                title: '卸载成功',
+                message: '已卸载 ${software.name}',
+              );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -1155,11 +1277,13 @@ class _InstallProgressDialog extends StatefulWidget {
   final Software software;
   final String category;
   final Function(bool success, String? error) onComplete;
+  final GlobalKey<NavigatorState>? pageNavigatorKey;
 
   const _InstallProgressDialog({
     required this.software,
     required this.category,
     required this.onComplete,
+    this.pageNavigatorKey,
   });
 
   @override
@@ -1171,7 +1295,6 @@ class _InstallProgressDialogState extends State<_InstallProgressDialog> {
   int _progress = 0;
   bool _isInstalling = true;
   final List<String> _logMessages = [];
-  String? _calculatedHash;
   bool _isDownloading = false;
   bool _isCancelled = false;
   final ScrollController _scrollController = ScrollController();
@@ -1241,11 +1364,11 @@ class _InstallProgressDialogState extends State<_InstallProgressDialog> {
 
     final success = result.$1;
     final error = result.$2;
-    final calculatedHash = result.$3;
+    // final calculatedHash = result.$3; // 暂不使用
 
     if (mounted) {
       setState(() {
-        _calculatedHash = calculatedHash;
+        // _calculatedHash = calculatedHash; // 已注释，暂不使用
       });
     }
 
@@ -1253,8 +1376,11 @@ class _InstallProgressDialogState extends State<_InstallProgressDialog> {
       // 检查是否是哈希不匹配的情况
       if (!success && error == InstallService.statusHashMismatch) {
         // 显示哈希不匹配确认对话框
+        final pageContext = widget.pageNavigatorKey?.currentContext ?? context;
+
         final shouldContinue = await showDialog<bool>(
-          context: context,
+          context: pageContext,
+          useRootNavigator: false, // 只在当前页面的 Navigator 中显示
           barrierDismissible: false,
           builder: (context) => AlertDialog(
             title: const Text('文件完整性验证失败'),
@@ -1344,13 +1470,14 @@ class _InstallProgressDialogState extends State<_InstallProgressDialog> {
       title: Text('安装 ${widget.software.name}'),
       content: SizedBox(
         width: double.maxFinite,
+        height: 340, // 固定高度：命令行区域300 + 间距12 + 进度条4 + 其他间距14
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             // 命令行样式的输出区域
             Container(
               width: double.maxFinite,
-              height: 300,
+              height: 270, // 固定高度
               decoration: BoxDecoration(
                 color: backgroundColor,
                 borderRadius: BorderRadius.circular(4),

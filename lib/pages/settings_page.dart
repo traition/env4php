@@ -16,7 +16,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   String? _storagePath;
   String? _softwareSourcePath;
-  String _sourceURL = '';
   bool _isLoading = true;
 
   @override
@@ -24,16 +23,6 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _loadStoragePath();
     _loadSoftwareSourcePath();
-    _loadSourceURL();
-  }
-  
-  Future<void> _loadSourceURL() async {
-    final url = SoftwareSourceService.getSourceURL();
-    if (mounted) {
-      setState(() {
-        _sourceURL = url;
-      });
-    }
   }
 
   Future<void> _loadStoragePath() async {
@@ -55,6 +44,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _changeStoragePath() async {
     final newPath = await showDialog<String>(
+      useRootNavigator: false, // 不在根 Navigator 中显示，只在 Container 区域显示
       context: context,
       builder: (context) => const StoragePathDialog(),
     );
@@ -66,7 +56,7 @@ class _SettingsPageState extends State<SettingsPage> {
       await ConfigService.initializeStorageDirectories(newPath);
       // 重新加载
       await _loadStoragePath();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -78,88 +68,29 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _changeSourceURL() async {
-    final controller = TextEditingController(text: _sourceURL);
-    
-    final newURL = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('修改软件源地址'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: '软件源 URL',
-            hintText: 'https://example.com/soft.json',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final url = controller.text.trim();
-              if (url.isNotEmpty) {
-                Navigator.of(context).pop(url);
-              }
-            },
-            child: const Text('确定'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop('https://conf.e4p.uxyz.fyi/');
-            },
-            child: const Text('恢复默认'),
-          ),
-        ],
-      ),
-    );
-
-    if (newURL != null && newURL.isNotEmpty) {
-      SoftwareSourceService.setSourceURL(newURL);
-      await _loadSourceURL();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('软件源地址已更新'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _openStoragePath() async {
     if (_storagePath == null || _storagePath!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('存储目录未设置')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('存储目录未设置')));
       return;
     }
 
     final storageDir = Directory(_storagePath!);
     if (!await storageDir.exists()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('存储目录不存在')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('存储目录不存在')));
       return;
     }
 
     // 在 Windows 上使用 explorer 打开目录
     try {
-      await Process.run(
-        'explorer',
-        [_storagePath!],
-        runInShell: true,
-      );
+      await Process.run('explorer', [_storagePath!], runInShell: true);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('无法打开目录: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('无法打开目录: $e')));
     }
   }
 
@@ -185,19 +116,16 @@ class _SettingsPageState extends State<SettingsPage> {
                         ? Text(
                             _storagePath!,
                             style: TextStyle(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.7),
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withValues(alpha: 0.7),
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           )
                         : const Text(
                             '未设置',
-                            style: TextStyle(
-                              color: Colors.red,
-                            ),
+                            style: TextStyle(color: Colors.red),
                           ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -216,28 +144,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       ],
                     ),
                   ),
-                  // 软件源 URL 设置
-                  const Divider(),
-                  ListTile(
-                    leading: const Icon(Icons.cloud_download),
-                    title: const Text('软件源地址'),
-                    subtitle: Text(
-                      _sourceURL,
-                      style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.7),
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.edit),
-                      tooltip: '修改软件源地址',
-                      onPressed: _changeSourceURL,
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -252,10 +158,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     ? Text(
                         _softwareSourcePath!,
                         style: TextStyle(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.7),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: 0.7),
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -270,11 +175,9 @@ class _SettingsPageState extends State<SettingsPage> {
                           final dir = file.parent;
                           if (await dir.exists()) {
                             try {
-                              await Process.run(
-                                'explorer',
-                                [dir.path],
-                                runInShell: true,
-                              );
+                              await Process.run('explorer', [
+                                dir.path,
+                              ], runInShell: true);
                             } catch (e) {
                               if (mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -294,4 +197,3 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 }
-

@@ -7,7 +7,7 @@ import '../models/software_model.dart';
 /// 软件源服务
 class SoftwareSourceService {
   static const String _localFileName = 'soft.json';
-  static const String _defaultSourceURL = 'https://e4p-conf.pages.dev/soft.json';
+  static const String _defaultSourceURL = 'https://conf.e4p.uxyz.fyi/soft.json';
   static String? _sourceURL;
 
   /// 获取本地软件源文件路径
@@ -40,7 +40,6 @@ class SoftwareSourceService {
 
       // 发送请求并获取响应
       final response = await request.close().timeout(timeout);
-
 
       if (response.statusCode == 200) {
         // 读取响应体
@@ -133,31 +132,25 @@ class SoftwareSourceService {
     }
   }
 
-  /// 获取软件源（优先从 URL 下载，失败则使用缓存）
+  /// 获取软件源（只有首次打开或没有缓存时才下载，其余情况从本地加载）
   static Future<SoftwareSource?> getSource() async {
-    final url = getSourceURL();
+    // 检查是否有本地缓存
+    final hasCache = await hasCachedSource();
+    if (!hasCache) {
+      final downloadSuccess = await downloadSource();
 
-    if (kDebugMode) {
-      print('=== 开始获取软件源 ===');
-      print('目标 URL: $url');
-    }
-
-    // 首先尝试从 URL 下载
-    final downloadSuccess = await downloadSource();
-
-    if (downloadSuccess) {
-      // 下载成功，从本地加载
-      if (kDebugMode) {
-        print('下载成功，从本地文件加载');
+      if (downloadSuccess) {
+        return await loadLocalSource(isFromCache: false);
+      } else {
+        // 下载失败，返回null
+        if (kDebugMode) {
+          print('下载失败，没有可用缓存');
+        }
+        return null;
       }
-      return await loadLocalSource(isFromCache: false);
+    } else {
+      return await loadLocalSource(isFromCache: true);
     }
-
-    // 下载失败，尝试从缓存加载
-    if (kDebugMode) {
-      print('下载失败，尝试从缓存加载');
-    }
-    return await loadLocalSource(isFromCache: true);
   }
 
   /// 获取软件源 URL

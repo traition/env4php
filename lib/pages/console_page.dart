@@ -29,7 +29,6 @@ class _ProjectInfo {
 }
 
 class _ConsolePageState extends State<ConsolePage> {
-  List<Software> _installedTools = [];
   List<_ProjectInfo> _projects = []; // 项目列表
   List<Software> _installedServers = []; // 已安装的服务器列表
   bool _isLoadingServers = true; // 是否正在加载服务器列表
@@ -43,111 +42,14 @@ class _ConsolePageState extends State<ConsolePage> {
   @override
   void initState() {
     super.initState();
-    _loadInstalledTools();
     _loadInstalledServers();
     _loadProjects();
-  }
-
-  /// 加载已安装的tools应用
-  Future<void> _loadInstalledTools() async {
-    final softwareSource = await SoftwareSourceService.getSource();
-    if (softwareSource == null) return;
-
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) return;
-
-    final List<Software> installed = [];
-
-    for (final software in softwareSource.tools) {
-      // 过滤掉composer相关的应用（cate4、id、文件夹名任一匹配composer）
-      if (software.cate4?.toLowerCase() == 'composer' ||
-          software.id.toLowerCase() == 'composer') {
-        continue;
-      }
-
-      final dir = Directory('$storagePath/tools/${software.id}');
-      if (await dir.exists()) {
-        // 检查文件夹名称是否为composer
-        final folderName = path.basename(dir.path).toLowerCase();
-        if (folderName == 'composer') {
-          continue;
-        }
-        installed.add(software);
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _installedTools = installed;
-      });
-    }
-  }
-
-  /// 启动应用（占位函数，后续实现）
-  void _launchTool(Software software) {
-    // TODO: 实现启动逻辑
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('启动 ${software.name}（功能待实现）'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // 顶部横向显示已安装的tools应用
-        if (_installedTools.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              border: Border(
-                bottom: BorderSide(
-                  color: Theme.of(context).dividerColor,
-                  width: 1,
-                ),
-              ),
-            ),
-            child: SizedBox(
-              height: 48, // 80 * 0.8
-              child: Row(
-                children: [
-                  // 竖排"工具"文字
-                  Container(
-                    width: 24,
-                    margin: const EdgeInsets.only(right: 16),
-                    child: Center(
-                      child: RotatedBox(
-                        quarterTurns: 0,
-                        child: Text(
-                          '工具',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(fontWeight: FontWeight.bold),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                  ),
-                  // 工具列表
-                  Expanded(
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _installedTools.length,
-                      separatorBuilder: (context, index) =>
-                          const SizedBox(width: 12),
-                      itemBuilder: (context, index) {
-                        final tool = _installedTools[index];
-                        return _buildToolChip(tool);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         // 控制台内容区域：左右分栏
         Expanded(
           child: Row(
@@ -173,99 +75,6 @@ class _ConsolePageState extends State<ConsolePage> {
           ),
         ),
       ],
-    );
-  }
-
-  /// 获取图标路径
-  Future<String?> _getIconPath(Software software) async {
-    try {
-      // 获取应用可执行文件目录
-      final executablePath = Platform.resolvedExecutable;
-      final executableDir = path.dirname(executablePath);
-      final iconsDir = path.join(executableDir, 'assets', 'icons');
-
-      // 确定图标文件名
-      String? iconFileName;
-      if (software.cate4 != null && software.cate4!.isNotEmpty) {
-        // 使用 cate4 值作为文件名
-        iconFileName = '${software.cate4}.png';
-      } else {
-        // 没有 cate4 值，不显示图标
-        return null;
-      }
-
-      // 构建完整路径
-      final iconPath = path.join(iconsDir, iconFileName);
-      final iconFile = File(iconPath);
-
-      // 检查文件是否存在
-      if (await iconFile.exists()) {
-        return iconPath;
-      }
-
-      return null;
-    } catch (e) {
-      // 出错时返回 null，不显示图标
-      return null;
-    }
-  }
-
-  /// 构建工具芯片
-  Widget _buildToolChip(Software tool) {
-    return SizedBox.square(
-      dimension: 64,
-      child: InkWell(
-        onTap: () => _launchTool(tool),
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          padding: const EdgeInsets.all(0),
-          child: FutureBuilder<String?>(
-            future: _getIconPath(tool),
-            builder: (context, snapshot) {
-              if (snapshot.hasData && snapshot.data != null) {
-                // 图标文件存在，显示图标
-                return Image.file(
-                  File(snapshot.data!),
-                  width: 48,
-                  height: 48,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    // 图标加载失败，显示应用id
-                    return Center(
-                      child: Text(
-                        tool.id,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w500,
-                        ),
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    );
-                  },
-                );
-              } else {
-                // 找不到图标，显示应用id
-                return Center(
-                  child: Text(
-                    tool.id,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w500,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
-              }
-            },
-          ),
-        ),
-      ),
     );
   }
 
