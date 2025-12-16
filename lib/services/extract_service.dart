@@ -60,6 +60,8 @@ class ExtractService {
   }
 
   /// 使用 7za.exe 解压
+  /// 注意：7za 的 x 命令只会解压压缩包中的文件，不会删除目标目录中不在压缩包中的文件
+  /// -y 参数表示自动确认覆盖同名文件
   static Future<bool> _extractWith7za(
     String exePath,
     String archivePath,
@@ -67,13 +69,17 @@ class ExtractService {
   ) async {
     try {
       // 7za.exe x archive.zip -o输出目录 -y
+      // x 命令：解压文件，保留目录结构
+      // -o 参数：指定输出目录（注意：-o 和路径之间不能有空格）
+      // -y 参数：自动确认覆盖同名文件
+      // 注意：7za 不会删除目标目录中不在压缩包中的文件
       final result = await Process.run(
         exePath,
         [
-          'x',
+          'x', // 解压命令，保留目录结构
           archivePath,
-          '-o$outputDir',
-          '-y', // 自动确认覆盖
+          '-o$outputDir', // 输出目录（注意：-o 和路径之间不能有空格）
+          '-y', // 自动确认覆盖同名文件
         ],
         runInShell: true,
       );

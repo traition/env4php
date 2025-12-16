@@ -43,6 +43,8 @@ class MyApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         scaffoldBackgroundColor: const Color(0xFFF1F2F3), // 浅色背景
+        fontFamily: 'Microsoft Yahei UI', // 默认字体
+        fontFamilyFallback: const ['Microsoft YaHei', '微软雅黑'], // 字体回退列表
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
@@ -51,6 +53,8 @@ class MyApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
         scaffoldBackgroundColor: const Color(0xFF1A1A1A), // 深色背景
+        fontFamily: 'Microsoft Yahei UI', // 默认字体
+        fontFamilyFallback: const ['Microsoft YaHei', '微软雅黑'], // 字体回退列表
       ),
       themeMode: ThemeMode.system,
       home: const HomePage(title: 'env4php'),

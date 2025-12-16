@@ -426,6 +426,25 @@ class _HostsEditPageState extends State<HostsEditPage> {
     );
   }
 
+  /// 打开hosts文件（使用默认打开方式）
+  Future<void> _openHostsFile() async {
+    try {
+      // 使用 Windows 的 start 命令打开文件
+      await Process.run('cmd', [
+        '/c',
+        'start',
+        '',
+        _hostsPath,
+      ], runInShell: true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('无法打开hosts文件: $e')));
+      }
+    }
+  }
+
   /// 保存hosts文件
   Future<void> _saveHosts() async {
     try {
@@ -507,6 +526,12 @@ class _HostsEditPageState extends State<HostsEditPage> {
                     borderRadius: BorderRadius.all(Radius.circular(12)), // 圆角
                   ),
                   actions: [
+                    // 打开hosts文件按钮
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new),
+                      onPressed: _openHostsFile,
+                      tooltip: '打开hosts文件',
+                    ),
                     if (_hasChanges)
                       IconButton(
                         icon: const Icon(Icons.save),

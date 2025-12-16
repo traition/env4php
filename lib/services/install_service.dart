@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import '../models/software_model.dart';
@@ -549,8 +550,9 @@ class InstallService {
               '开始执行附件指令...',
             );
 
-            // 为附件创建临时解压目录
-            final attachmentTempDir = '${softwareDir.path}/.attachment_temp';
+            // 为附件创建临时解压目录（使用与主安装包相同的 .7ztemp 目录结构）
+            // 使用存储目录下的 .7ztemp，与主安装包保持一致
+            final attachmentTempDir = '$storagePath/$category/.7ztemp';
             final attachmentTempDirectory = Directory(attachmentTempDir);
 
             try {
@@ -825,10 +827,10 @@ class InstallService {
             }
 
             final tempDirectory = Directory(tempDir);
-            if (await tempDirectory.exists()) {
-              await tempDirectory.delete(recursive: true);
+            // 不删除原有内容，只确保目录存在（覆盖解压，保留原有文件）
+            if (!await tempDirectory.exists()) {
+              await tempDirectory.create(recursive: true);
             }
-            await tempDirectory.create(recursive: true);
             currentTempDir = tempDirectory;
             currentWorkDir = tempDir;
 
@@ -1697,10 +1699,10 @@ class InstallService {
             }
 
             final tempDirectory = Directory(tempDir);
-            if (await tempDirectory.exists()) {
-              await tempDirectory.delete(recursive: true);
+            // 不删除原有内容，只确保目录存在
+            if (!await tempDirectory.exists()) {
+              await tempDirectory.create(recursive: true);
             }
-            await tempDirectory.create(recursive: true);
             currentTempDir = tempDirectory;
             currentWorkDir = tempDir; // unpack 后，工作目录仍在临时目录
 
@@ -1714,6 +1716,41 @@ class InstallService {
               return (false, '解压失败', addedPaths);
             }
             onProgress?.call('正在执行附件指令...', progress, '解压完成');
+
+            // 调试暂停：等待用户输入 'c' 后继续
+            print('\n=== 附件解压完成，临时目录: $tempDir ===');
+            print('临时目录内容:');
+            try {
+              final tempDirObj = Directory(tempDir);
+              if (await tempDirObj.exists()) {
+                await for (final entity in tempDirObj.list()) {
+                  print('  - ${entity.path}');
+                }
+              }
+            } catch (e) {
+              print('  无法列出目录内容: $e');
+            }
+            print('\n请在调试控制台输入 "c" 并按回车继续...');
+
+            // 使用 debugger() 断点暂停，检查临时目录后按 F5 继续
+            if (kDebugMode) {
+              developer.debugger(message: '附件解压完成，检查临时目录后按 F5 继续');
+            }
+
+            // 同时提供控制台输入方式（如果可用）
+            String? input;
+            try {
+              if (stdin.hasTerminal) {
+                print('或者在此输入 "c" 继续: ');
+                input = stdin.readLineSync();
+                if (input == 'c') {
+                  print('继续执行...\n');
+                }
+              }
+            } catch (e) {
+              print('读取输入失败: $e');
+            }
+
             break;
 
           case 'skip':
@@ -2672,20 +2709,22 @@ class InstallService {
     // 遍历源文件夹中的所有内容
     await for (final entity in sourceDir.list()) {
       final entityName = path.basename(entity.path);
-      final destEntity = File(path.join(destDir.path, entityName));
+      final destEntityPath = path.join(destDir.path, entityName);
 
       if (entity is File) {
         // 如果是文件，直接覆盖（如果目标文件存在）
-        if (await destEntity.exists()) {
-          await destEntity.delete();
+        final destFile = File(destEntityPath);
+        if (await destFile.exists()) {
+          await destFile.delete();
         }
-        await File(entity.path).copy(destEntity.path);
+        await File(entity.path).copy(destFile.path);
       } else if (entity is Directory) {
-        // 如果是文件夹，递归合并
-        final destSubDir = Directory(destEntity.path);
+        // 如果是文件夹，递归合并（只处理源目录中存在的文件，保留目标目录中的其他文件）
+        final destSubDir = Directory(destEntityPath);
         await _mergeDirectory(Directory(entity.path), destSubDir);
       }
     }
+    // 注意：不会删除目标目录中不在源目录中的文件，只覆盖同名文件
   }
 
   static Future<void> _deleteDirectoryWithRetry(

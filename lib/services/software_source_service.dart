@@ -132,6 +132,88 @@ class SoftwareSourceService {
     }
   }
 
+  /// 检查软件源是否有更新
+  /// 返回 true 表示有更新，false 表示无更新或检查失败
+  static Future<bool> checkForUpdate() async {
+    try {
+      final url = getSourceURL();
+      if (url.isEmpty) {
+        return false;
+      }
+
+      // 检查是否有本地缓存
+      final hasCache = await hasCachedSource();
+      if (!hasCache) {
+        // 没有缓存，直接下载
+        return await downloadSource();
+      }
+
+      // 读取本地缓存内容
+      final localPath = await getLocalSourcePath();
+      final localFile = File(localPath);
+      final localContent = await localFile.readAsString();
+
+      // 尝试下载最新版本（使用较短的超时时间）
+      HttpClient? httpClient;
+      try {
+        httpClient = HttpClient();
+        final uri = Uri.parse(url);
+        final request = await httpClient.getUrl(uri).timeout(
+          const Duration(seconds: 5),
+        );
+
+        request.headers.set('Accept', 'application/json');
+        request.headers.set('User-Agent', 'env4php/1.0');
+
+        final response = await request.close().timeout(
+          const Duration(seconds: 5),
+        );
+
+        if (response.statusCode == 200) {
+          final bytes = await response.expand((chunk) => chunk).toList();
+          final contentBytes = Uint8List.fromList(bytes);
+          String remoteContent;
+          try {
+            remoteContent = utf8.decode(contentBytes);
+          } catch (e) {
+            remoteContent = String.fromCharCodes(contentBytes);
+          }
+
+          httpClient.close();
+
+          // 比较内容是否相同
+          if (remoteContent != localContent) {
+            // 有更新，保存新版本
+            await localFile.writeAsString(remoteContent, encoding: utf8);
+            return true;
+          }
+
+          return false;
+        }
+
+        httpClient.close();
+        return false;
+      } catch (e) {
+        if (kDebugMode) {
+          print('检查软件源更新失败: $e');
+        }
+        if (httpClient != null) {
+          try {
+            httpClient.close();
+          } catch (_) {
+            // 忽略关闭错误
+          }
+        }
+        return false;
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('检查软件源更新失败: $e');
+      }
+      return false;
+    }
+  }
+
   /// 获取软件源（只有首次打开或没有缓存时才下载，其余情况从本地加载）
   static Future<SoftwareSource?> getSource() async {
     // 检查是否有本地缓存

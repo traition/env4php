@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 import 'package:window_manager/window_manager.dart';
@@ -30,6 +31,9 @@ class _HomePageState extends State<HomePage> {
   double _titleBarTopOffset = 0;
   // Container 区域的 Navigator Key
   final GlobalKey<NavigatorState> _containerNavigatorKey =
+      GlobalKey<NavigatorState>();
+  // 右侧页面容器的 Navigator Key
+  final GlobalKey<NavigatorState> _rightContainerNavigatorKey =
       GlobalKey<NavigatorState>();
   // 已安装的工具列表
   List<Software> _installedTools = [];
@@ -133,7 +137,7 @@ class _HomePageState extends State<HomePage> {
     await _checkAndDownloadSoftwareSource();
   }
 
-  /// 检查并下载软件源（只有首次打开或没有缓存时才下载）
+  /// 检查并下载软件源（每次冷启动都更新）
   Future<void> _checkAndDownloadSoftwareSource() async {
     // 检查是否有缓存
     final hasCache = await SoftwareSourceService.hasCachedSource();
@@ -160,9 +164,9 @@ class _HomePageState extends State<HomePage> {
         );
       }
 
-      // 尝试下载（3秒超时）
+      // 尝试下载（5秒超时）
       final downloadSuccess = await SoftwareSourceService.downloadSource(
-        timeout: const Duration(seconds: 3),
+        timeout: const Duration(seconds: 5),
       );
 
       if (mounted) {
@@ -183,8 +187,29 @@ class _HomePageState extends State<HomePage> {
           );
         }
       }
+    } else {
+      // 有缓存，在后台更新软件源（冷启动时总是更新）
+      _updateSoftwareSourceInBackground();
     }
-    // 如果有缓存，直接使用缓存，不显示任何提示
+  }
+
+  /// 在后台更新软件源（冷启动时调用）
+  Future<void> _updateSoftwareSourceInBackground() async {
+    try {
+      final hasUpdate = await SoftwareSourceService.checkForUpdate();
+      if (hasUpdate && mounted) {
+        // 有更新，显示右下角通知
+        await NotificationService.showInfo(
+          title: '软件源已更新',
+          message: '软件源已更新到最新版本',
+        );
+      }
+    } catch (e) {
+      // 更新失败，静默处理，不影响用户体验
+      if (kDebugMode) {
+        print('更新软件源失败: $e');
+      }
+    }
   }
 
   // 获取当前页面组件
@@ -228,7 +253,7 @@ class _HomePageState extends State<HomePage> {
           behavior: HitTestBehavior.translucent,
           child: MouseRegion(
             cursor: SystemMouseCursors.move,
-            child: Container(
+            child: SizedBox(
               width: 48,
               child: Center(
                 child: Text(
@@ -242,21 +267,40 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ),
-        // 工具列表 - 空白区域可拖动
+        // 工具列表 - 工具按钮可点击，空白区域可拖动
         Expanded(
-          child: Stack(
+          child: Row(
             children: [
-              ListView.separated(
+              // 工具按钮列表（可点击，支持横向滚动）
+              SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                itemCount: _installedTools.length,
-                separatorBuilder: (context, index) => const SizedBox(width: 10),
-                itemBuilder: (context, index) {
-                  final tool = _installedTools[index];
-                  return _buildToolChip(context, tool);
-                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(_installedTools.length, (index) {
+                    final tool = _installedTools[index];
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildToolChip(context, tool),
+                        if (index < _installedTools.length - 1)
+                          // 工具按钮之间的空白区域，可拖动
+                          Listener(
+                            onPointerDown: (event) {
+                              windowManager.startDragging();
+                            },
+                            behavior: HitTestBehavior.translucent,
+                            child: MouseRegion(
+                              cursor: SystemMouseCursors.move,
+                              child: const SizedBox(width: 10),
+                            ),
+                          ),
+                      ],
+                    );
+                  }),
+                ),
               ),
-              // 空白区域可拖动层（工具按钮会拦截事件，所以只有空白区域可拖动）
-              Positioned.fill(
+              // 右侧空白区域，可拖动
+              Expanded(
                 child: Listener(
                   onPointerDown: (event) {
                     windowManager.startDragging();
@@ -383,7 +427,7 @@ class _HomePageState extends State<HomePage> {
   Widget _getCurrentPage() {
     switch (_currentPage) {
       case '控制台':
-        return const ConsolePage();
+        return ConsolePage(navigatorKey: _rightContainerNavigatorKey);
       case '软件管理':
         return const SoftwareManagementPage();
       case '快捷工具':
@@ -391,7 +435,7 @@ class _HomePageState extends State<HomePage> {
       case '设置':
         return const SettingsPage();
       default:
-        return const ConsolePage();
+        return ConsolePage(navigatorKey: _rightContainerNavigatorKey);
     }
   }
 
@@ -539,7 +583,14 @@ class _HomePageState extends State<HomePage> {
                                 ),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
-                                  child: _getCurrentPage(),
+                                  child: Navigator(
+                                    key: _rightContainerNavigatorKey,
+                                    onGenerateRoute: (settings) {
+                                      return MaterialPageRoute(
+                                        builder: (context) => _getCurrentPage(),
+                                      );
+                                    },
+                                  ),
                                 ),
                               ),
                             ),

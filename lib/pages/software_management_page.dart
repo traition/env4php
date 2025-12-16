@@ -8,6 +8,7 @@ import '../services/config_service.dart';
 import '../services/software_source_service.dart';
 import '../services/install_service.dart';
 import '../services/notification_service.dart';
+import '../utils/software_menu_helper.dart';
 import '../widgets/storage_path_dialog.dart';
 
 /// 软件管理页面
@@ -19,16 +20,16 @@ class SoftwareManagementPage extends StatefulWidget {
 }
 
 /// 日志查看器对话框
-class _LogViewerDialog extends StatefulWidget {
+class LogViewerDialog extends StatefulWidget {
   final File logFile;
 
-  const _LogViewerDialog({required this.logFile});
+  const LogViewerDialog({super.key, required this.logFile});
 
   @override
-  State<_LogViewerDialog> createState() => _LogViewerDialogState();
+  State<LogViewerDialog> createState() => _LogViewerDialogState();
 }
 
-class _LogViewerDialogState extends State<_LogViewerDialog> {
+class _LogViewerDialogState extends State<LogViewerDialog> {
   String _content = '';
   bool _isLoading = true;
 
@@ -186,6 +187,70 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
       });
       if (source != null) {
         _refreshInstalledSoftware();
+      }
+    }
+  }
+
+  /// 刷新软件源
+  Future<void> _refreshSoftwareSource() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
+
+    try {
+      // 显示刷新提示
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 16),
+                Text('正在刷新软件源...'),
+              ],
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+
+      // 尝试下载最新版本（10秒超时）
+      final downloadSuccess = await SoftwareSourceService.downloadSource(
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (mounted) {
+        if (downloadSuccess) {
+          // 下载成功，重新加载软件源
+          await _initialize();
+          await NotificationService.showSuccess(
+            title: '刷新成功',
+            message: '软件源已更新到最新版本',
+          );
+        } else {
+          // 下载失败，显示错误通知
+          await NotificationService.showError(
+            title: '刷新失败',
+            message: '无法从服务器下载软件源。请检查网络连接，或修改软件源地址。',
+          );
+          // 重新加载（使用缓存）
+          await _initialize();
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        await NotificationService.showError(
+          title: '刷新失败',
+          message: '刷新软件源时发生错误: $e',
+        );
+        // 重新加载（使用缓存）
+        await _initialize();
       }
     }
   }
@@ -395,6 +460,11 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
                         ),
                       ),
                       const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.refresh),
+                        onPressed: _refreshSoftwareSource,
+                        tooltip: '刷新软件源',
+                      ),
                       IconButton(
                         icon: const Icon(Icons.settings),
                         onPressed: _changeSourceURL,
@@ -993,7 +1063,7 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
     showDialog(
       context: pageContext,
       useRootNavigator: false, // 只在当前页面的 Navigator 中显示
-      builder: (context) => _LogViewerDialog(logFile: logFile),
+      builder: (context) => LogViewerDialog(logFile: logFile),
     );
   }
 
@@ -1087,19 +1157,16 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
   }
 
   void _showManageDialog(Software software) async {
-    // 根据 cate4 值或分类显示不同的管理选项
-    final isNginx = software.cate4?.toLowerCase() == 'nginx';
-    final isRedis = software.cate4?.toLowerCase() == 'redis';
-    final isRudis = software.cate4?.toLowerCase() == 'rudis';
-    final isMysql = software.cate4?.toLowerCase() == 'mysql';
-    final isMongodb = software.cate4?.toLowerCase() == 'mongodb';
-    // 判断是否为 PHP 分类
-    final isPhp =
-        _softwareSource != null &&
-        _softwareSource!.php.any((s) => s.id == software.id);
-
     final pageContext = _pageNavigatorKey.currentContext;
     if (pageContext == null) return;
+
+    // 使用共享的菜单项构建逻辑
+    final menuItems = await SoftwareMenuHelper.buildManageDialogItems(
+      software,
+      softwareSource: _softwareSource,
+      onAction: (action) => _handleMenuAction(action, software),
+      context: pageContext,
+    );
 
     showDialog(
       context: pageContext,
@@ -1109,121 +1176,7 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              if (isNginx) ...[
-                // nginx 专用选项
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('编辑 nginx.conf'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _editNginxConfig(software);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description),
-                  title: const Text('查看 error.log'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _viewErrorLog(software);
-                  },
-                ),
-                const Divider(),
-              ],
-              if (isRedis) ...[
-                // redis 专用选项
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('编辑conf'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _editRedisConfig(software);
-                  },
-                ),
-                const Divider(),
-              ],
-              if (isRudis) ...[
-                // rudis 专用选项
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('编辑配置'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _editRudisConfig(software);
-                  },
-                ),
-                const Divider(),
-              ],
-              if (isMysql) ...[
-                // mysql 专用选项
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('编辑ini'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _editMysqlIni(software);
-                  },
-                ),
-                const Divider(),
-              ],
-              if (isMongodb) ...[
-                // mongodb 专用选项
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('编辑配置'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _editMongodbConfig(software);
-                  },
-                ),
-                const Divider(),
-              ],
-              if (isPhp) ...[
-                // PHP 专用选项
-                ListTile(
-                  leading: const Icon(Icons.settings),
-                  title: const Text('设为php-cli版本'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _setPhpCliVersion(software);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('编辑 php.ini'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _editPhpIni(software);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.extension),
-                  title: const Text('安装扩展'),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    _installPhpExtension(software);
-                  },
-                ),
-                const Divider(),
-              ],
-              // 通用选项
-              ListTile(
-                leading: const Icon(Icons.folder),
-                title: const Text('打开目录'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _openSoftwareDirectory(software);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete),
-                title: const Text('卸载'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showUninstallDialog(software);
-                },
-              ),
-            ],
+            children: menuItems,
           ),
         ),
         actions: [
@@ -1234,6 +1187,47 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
         ],
       ),
     );
+  }
+
+  /// 处理菜单操作
+  void _handleMenuAction(SoftwareMenuAction action, Software software) {
+    switch (action) {
+      case SoftwareMenuAction.editNginxConfig:
+        _editNginxConfig(software);
+        break;
+      case SoftwareMenuAction.viewLog:
+        _viewErrorLog(software);
+        break;
+      case SoftwareMenuAction.editRedisConfig:
+        _editRedisConfig(software);
+        break;
+      case SoftwareMenuAction.editRudisConfig:
+        _editRudisConfig(software);
+        break;
+      case SoftwareMenuAction.editMysqlIni:
+        _editMysqlIni(software);
+        break;
+      case SoftwareMenuAction.editMongodbConfig:
+        _editMongodbConfig(software);
+        break;
+      case SoftwareMenuAction.setPhpCliVersion:
+        _setPhpCliVersion(software);
+        break;
+      case SoftwareMenuAction.editPhpIni:
+        _editPhpIni(software);
+        break;
+      case SoftwareMenuAction.installPhpExtension:
+        _installPhpExtension(software);
+        break;
+      case SoftwareMenuAction.openDirectory:
+        _openSoftwareDirectory(software);
+        break;
+      case SoftwareMenuAction.uninstall:
+        _showUninstallDialog(software);
+        break;
+      default:
+        break;
+    }
   }
 
   void _showUninstallDialog(Software software) {
