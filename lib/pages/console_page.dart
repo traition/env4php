@@ -3,12 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:file_picker/file_picker.dart';
 import '../services/config_service.dart';
 import '../services/software_source_service.dart';
 import '../services/notification_service.dart';
 import '../services/install_service.dart';
 import '../services/software_action_service.dart';
+import '../services/icon_service.dart';
 import '../models/software_model.dart';
 import '../utils/software_menu_helper.dart';
 import '../utils/nginx_project_helper.dart';
@@ -55,6 +55,10 @@ class _ConsolePageState extends State<ConsolePage> {
   final Map<String, bool> _serverRunningStatus = {};
   // 跟踪每个项目的运行状态：true表示运行中，false表示已停止
   final Map<String, bool> _projectRunningStatus = {};
+  // 跟踪每个PHP应用的进程ID
+  final Map<String, int> _phpProcessIds = {};
+  // 跟踪已安装的PHP软件ID列表（用于快速判断是否为PHP）
+  final Set<String> _installedPhpIds = {};
 
   @override
   void initState() {
@@ -172,6 +176,7 @@ class _ConsolePageState extends State<ConsolePage> {
       final dir = Directory('$storagePath/php/${software.id}');
       if (await dir.exists()) {
         installed.add(software);
+        _installedPhpIds.add(software.id); // 标记为PHP
         // 初始化运行状态为 false（未启动）
         if (!_serverRunningStatus.containsKey(software.id)) {
           _serverRunningStatus[software.id] = false;
@@ -187,16 +192,176 @@ class _ConsolePageState extends State<ConsolePage> {
     }
   }
 
-  /// 全部启动服务器（占位函数）
-  void _startAllServers() {
-    // TODO: 实现全部启动逻辑
-    NotificationService.showInfo(title: '提示', message: '全部启动（功能待实现）');
+  /// 全部启动服务器
+  Future<void> _startAllServers() async {
+    if (_installedServers.isEmpty) {
+      await NotificationService.showInfo(title: '提示', message: '没有已安装的服务器');
+      return;
+    }
+
+    int skipCount = 0;
+    final List<Future<void>> startTasks = [];
+
+    // 筛选需要启动的服务器
+    for (final server in _installedServers) {
+      // 检查是否已实现启动逻辑
+      final isImplemented =
+          server.cate4?.toLowerCase() == 'nginx' ||
+          _installedPhpIds.contains(server.id) ||
+          server.cate4?.toLowerCase() == 'mysql';
+
+      if (!isImplemented) {
+        // 未实现的服务器类型，跳过
+        skipCount++;
+        if (kDebugMode) {
+          print('[全部启动] 跳过未实现的服务器: ${server.name}');
+        }
+        continue;
+      }
+
+      // 检查是否已在运行
+      if (_serverRunningStatus[server.id] == true) {
+        if (kDebugMode) {
+          print('[全部启动] 服务器已在运行，跳过: ${server.name}');
+        }
+        continue;
+      }
+
+      // 添加到启动任务列表
+      startTasks.add(
+        _startServer(server).catchError((e) {
+          if (kDebugMode) {
+            print('[全部启动] 启动 ${server.name} 时发生错误: $e');
+          }
+        }),
+      );
+    }
+
+    if (startTasks.isEmpty) {
+      await NotificationService.showInfo(title: '全部启动', message: '没有需要启动的服务器');
+      return;
+    }
+
+    // 并行执行所有启动任务
+    await Future.wait(startTasks);
+
+    // 统计结果
+    int successCount = 0;
+    int failCount = 0;
+    for (final server in _installedServers) {
+      final isImplemented =
+          server.cate4?.toLowerCase() == 'nginx' ||
+          _installedPhpIds.contains(server.id) ||
+          server.cate4?.toLowerCase() == 'mysql';
+
+      if (isImplemented && _serverRunningStatus[server.id] == true) {
+        successCount++;
+      } else if (isImplemented) {
+        failCount++;
+      }
+    }
+
+    // 显示汇总信息
+    final message = '启动完成：成功 $successCount 个';
+    if (skipCount > 0) {
+      await NotificationService.showInfo(
+        title: '全部启动',
+        message: '$message，跳过 $skipCount 个（未实现）',
+      );
+    } else if (failCount > 0) {
+      await NotificationService.showInfo(
+        title: '全部启动',
+        message: '$message，失败 $failCount 个',
+      );
+    } else {
+      await NotificationService.showSuccess(title: '全部启动', message: message);
+    }
   }
 
-  /// 全部停止服务器（占位函数）
-  void _stopAllServers() {
-    // TODO: 实现全部停止逻辑
-    NotificationService.showInfo(title: '提示', message: '全部停止（功能待实现）');
+  /// 全部停止服务器
+  Future<void> _stopAllServers() async {
+    if (_installedServers.isEmpty) {
+      await NotificationService.showInfo(title: '提示', message: '没有已安装的服务器');
+      return;
+    }
+
+    int skipCount = 0;
+    final List<Future<void>> stopTasks = [];
+
+    // 筛选需要停止的服务器
+    for (final server in _installedServers) {
+      // 检查是否已实现停止逻辑
+      final isImplemented =
+          server.cate4?.toLowerCase() == 'nginx' ||
+          _installedPhpIds.contains(server.id) ||
+          server.cate4?.toLowerCase() == 'mysql';
+
+      if (!isImplemented) {
+        // 未实现的服务器类型，跳过
+        skipCount++;
+        if (kDebugMode) {
+          print('[全部停止] 跳过未实现的服务器: ${server.name}');
+        }
+        continue;
+      }
+
+      // 检查是否已停止
+      if (_serverRunningStatus[server.id] != true) {
+        if (kDebugMode) {
+          print('[全部停止] 服务器已停止，跳过: ${server.name}');
+        }
+        continue;
+      }
+
+      // 添加到停止任务列表
+      stopTasks.add(
+        _stopServer(server).catchError((e) {
+          if (kDebugMode) {
+            print('[全部停止] 停止 ${server.name} 时发生错误: $e');
+          }
+        }),
+      );
+    }
+
+    if (stopTasks.isEmpty) {
+      await NotificationService.showInfo(title: '全部停止', message: '没有需要停止的服务器');
+      return;
+    }
+
+    // 并行执行所有停止任务
+    await Future.wait(stopTasks);
+
+    // 统计结果
+    int successCount = 0;
+    int failCount = 0;
+    for (final server in _installedServers) {
+      final isImplemented =
+          server.cate4?.toLowerCase() == 'nginx' ||
+          _installedPhpIds.contains(server.id) ||
+          server.cate4?.toLowerCase() == 'mysql';
+
+      if (isImplemented && _serverRunningStatus[server.id] != true) {
+        successCount++;
+      } else if (isImplemented && _serverRunningStatus[server.id] == true) {
+        failCount++;
+      }
+    }
+
+    // 显示汇总信息
+    final message = '停止完成：成功 $successCount 个';
+    if (skipCount > 0) {
+      await NotificationService.showInfo(
+        title: '全部停止',
+        message: '$message，跳过 $skipCount 个（未实现）',
+      );
+    } else if (failCount > 0) {
+      await NotificationService.showInfo(
+        title: '全部停止',
+        message: '$message，失败 $failCount 个',
+      );
+    } else {
+      await NotificationService.showSuccess(title: '全部停止', message: message);
+    }
   }
 
   /// 启动单个服务器
@@ -264,6 +429,12 @@ class _ConsolePageState extends State<ConsolePage> {
           title: '启动成功',
           message: '${server.name} 已启动',
         );
+      } else if (_installedPhpIds.contains(server.id)) {
+        // PHP启动逻辑
+        await _startPhp(server);
+      } else if (server.cate4?.toLowerCase() == 'mysql') {
+        // MySQL启动逻辑
+        await _startMysql(server);
       } else {
         // 其他服务器类型暂未实现
         setState(() {
@@ -328,6 +499,12 @@ class _ConsolePageState extends State<ConsolePage> {
             message: '停止 ${server.name} 失败: ${result.stderr}',
           );
         }
+      } else if (_installedPhpIds.contains(server.id)) {
+        // PHP停止逻辑
+        await _stopPhp(server);
+      } else if (server.cate4?.toLowerCase() == 'mysql') {
+        // MySQL停止逻辑
+        await _stopMysql(server);
       } else {
         // 其他服务器类型暂未实现
         setState(() {
@@ -397,6 +574,12 @@ class _ConsolePageState extends State<ConsolePage> {
             message: '重启 ${server.name} 失败: ${result.stderr}',
           );
         }
+      } else if (_installedPhpIds.contains(server.id)) {
+        // PHP重启逻辑
+        await _restartPhp(server);
+      } else if (server.cate4?.toLowerCase() == 'mysql') {
+        // MySQL重启逻辑
+        await _restartMysql(server);
       } else {
         // 其他服务器类型暂未实现
         await NotificationService.showInfo(
@@ -424,6 +607,17 @@ class _ConsolePageState extends State<ConsolePage> {
     return name;
   }
 
+  /// 获取服务器图标路径
+  /// 使用 IconService 统一处理，确保与软件管理页面一致
+  Future<String?> _getServerIconPath(Software server) async {
+    // 加载软件源以判断分类
+    final softwareSource = await SoftwareSourceService.getSource();
+    return await IconService.getIconPath(
+      server,
+      softwareSource: softwareSource,
+    );
+  }
+
   /// 构建服务器列表项
   Widget _buildServerItem(Software server, bool isRunning) {
     // 获取显示名称（去除[*]后的部分）
@@ -440,11 +634,31 @@ class _ConsolePageState extends State<ConsolePage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 服务器名称（只显示前15个字符）
+                // 服务器图标
+                SizedBox.square(
+                  dimension: 24,
+                  child: FutureBuilder<String?>(
+                    future: _getServerIconPath(server),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasData && snapshot.data != null) {
+                        return Image.file(
+                          File(snapshot.data!),
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const SizedBox.shrink();
+                          },
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // 服务器名称（只显示前20个字符）
                 Expanded(
                   child: Text(
-                    displayName.length > 15
-                        ? '${displayName.substring(0, 15)}...'
+                    displayName.length > 20
+                        ? '${displayName.substring(0, 20)}...'
                         : displayName,
                     style: Theme.of(context).textTheme.bodyMedium,
                     overflow: TextOverflow.ellipsis,
@@ -2089,235 +2303,7 @@ class _ConsolePageState extends State<ConsolePage> {
     );
   }
 
-  /// 显示守护进程nginx配置对话框
-  Future<Map<String, dynamic>?> _showDaemonNginxConfigDialog(
-    String framework,
-    String projectName,
-  ) async {
-    final defaultServerName = _generateDefaultServerName(projectName);
-    final serverNameController = TextEditingController(text: defaultServerName);
-    final portController = TextEditingController(text: '80');
-    bool enableSsl = false;
-    final sslPortController = TextEditingController(text: '443');
-    bool useSelfSignedCert = false;
-    String? certPath;
-    String? keyPath;
-    final upstreamPortsController = TextEditingController(
-      text: framework == 'easyswoole'
-          ? '9501'
-          : framework == 'webman'
-          ? '8787'
-          : framework == 'hyperf'
-          ? '9501,9502'
-          : '',
-    );
-    final rootController = TextEditingController();
-    final customRulesController = TextEditingController();
-
-    return showDialog<Map<String, dynamic>>(
-      context: context,
-      useRootNavigator: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('配置nginx'),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 20,
-          ),
-          content: SizedBox(
-            width: 500,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // server_name
-                  Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: TextField(
-                      controller: serverNameController,
-                      decoration: const InputDecoration(
-                        labelText: 'server_name',
-                        hintText: '例如: example.localhost',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // 端口
-                  TextField(
-                    controller: portController,
-                    decoration: const InputDecoration(
-                      labelText: '端口',
-                      hintText: '默认: 80',
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 16),
-                  // SSL开关
-                  SwitchListTile(
-                    title: const Text('启用SSL'),
-                    value: enableSsl,
-                    onChanged: (value) => setState(() => enableSsl = value),
-                  ),
-                  if (enableSsl) ...[
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: sslPortController,
-                      decoration: const InputDecoration(
-                        labelText: 'SSL端口',
-                        hintText: '默认: 443',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 16),
-                    SwitchListTile(
-                      title: const Text('使用自签证书'),
-                      value: useSelfSignedCert,
-                      onChanged: (value) =>
-                          setState(() => useSelfSignedCert = value),
-                    ),
-                    if (!useSelfSignedCert) ...[
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          // TODO: 选择证书文件
-                        },
-                        icon: const Icon(Icons.file_upload),
-                        label: const Text('选择证书文件'),
-                      ),
-                      const SizedBox(height: 8),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          // TODO: 选择私钥文件
-                        },
-                        icon: const Icon(Icons.file_upload),
-                        label: const Text('选择私钥文件'),
-                      ),
-                    ],
-                  ],
-                  const SizedBox(height: 16),
-                  // upstream端口
-                  TextField(
-                    controller: upstreamPortsController,
-                    decoration: const InputDecoration(
-                      labelText: 'upstream端口',
-                      hintText: '用半角逗号分隔，例如: 9501,9502',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // root路径
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: rootController,
-                          decoration: const InputDecoration(
-                            labelText: 'root路径',
-                            hintText: '项目根目录路径',
-                            border: OutlineInputBorder(),
-                          ),
-                          readOnly: true,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          final result = await FilePicker.platform
-                              .getDirectoryPath();
-                          if (result != null) {
-                            setState(() {
-                              rootController.text = result;
-                            });
-                          }
-                        },
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // 自定义规则
-                  TextField(
-                    controller: customRulesController,
-                    decoration: const InputDecoration(
-                      labelText: '自定义server{}块规则',
-                      hintText: '可选，留空则不添加',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 5,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final upstreamPorts = upstreamPortsController.text.trim();
-                if (upstreamPorts.isEmpty) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: 'upstream端口不能为空',
-                  );
-                  return;
-                }
-
-                final serverName = serverNameController.text.trim();
-                final port = portController.text.trim();
-                final sslPort = sslPortController.text.trim();
-                final root = rootController.text.trim();
-
-                // 验证root路径
-                if (root.isEmpty) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: 'root路径不能为空',
-                  );
-                  return;
-                }
-
-                // 验证server_name和port
-                final validationError = _validateServerNameAndPort(
-                  serverName,
-                  port,
-                  enableSsl,
-                  sslPort,
-                );
-                if (validationError != null) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: validationError,
-                  );
-                  return;
-                }
-
-                Navigator.of(context).pop({
-                  'serverName': serverName,
-                  'port': port,
-                  'enableSsl': enableSsl,
-                  'sslPort': sslPort,
-                  'useSelfSignedCert': useSelfSignedCert,
-                  'certPath': certPath,
-                  'keyPath': keyPath,
-                  'upstreamPorts': upstreamPorts,
-                  'root': root,
-                  'customRules': customRulesController.text.trim(),
-                });
-              },
-              child: const Text('确定'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // 已移除：_showDaemonNginxConfigDialog - 已由 NginxConfigPage 替代
 
   /// 获取已安装的PHP版本列表
   Future<List<Software>> _getInstalledPhpVersions() async {
@@ -2536,421 +2522,8 @@ class _ConsolePageState extends State<ConsolePage> {
     );
   }
 
-  /// 显示普通PHP项目nginx配置对话框
-  Future<Map<String, dynamic>?> _showNormalPhpNginxConfigDialog(
-    String projectName,
-  ) async {
-    final defaultServerName = _generateDefaultServerName(projectName);
-    final serverNameController = TextEditingController(text: defaultServerName);
-    final portController = TextEditingController(text: '80');
-    bool enableSsl = false;
-    final sslPortController = TextEditingController(text: '443');
-    bool useSelfSignedCert = false;
-    String? certPath;
-    String? keyPath;
-    final rootController = TextEditingController();
-    String? selectedRewriteRule;
-
-    // 伪静态规则选项
-    const rewriteRules = [
-      'codeigniter',
-      'laravel',
-      'symfony',
-      'thinkphp',
-      'yii',
-    ];
-
-    return showDialog<Map<String, dynamic>>(
-      context: context,
-      useRootNavigator: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('配置nginx'),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 20,
-          ),
-          content: SizedBox(
-            width: 500,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // server_name
-                  Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: TextField(
-                      controller: serverNameController,
-                      decoration: const InputDecoration(
-                        labelText: 'server_name',
-                        hintText: '例如: example.localhost',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // 端口
-                  TextField(
-                    controller: portController,
-                    decoration: const InputDecoration(
-                      labelText: '端口',
-                      hintText: '默认: 80',
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 16),
-                  // SSL开关
-                  SwitchListTile(
-                    title: const Text('启用SSL'),
-                    value: enableSsl,
-                    onChanged: (value) => setState(() => enableSsl = value),
-                  ),
-                  if (enableSsl) ...[
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: sslPortController,
-                      decoration: const InputDecoration(
-                        labelText: 'SSL端口',
-                        hintText: '默认: 443',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 16),
-                    SwitchListTile(
-                      title: const Text('使用自签证书'),
-                      value: useSelfSignedCert,
-                      onChanged: (value) =>
-                          setState(() => useSelfSignedCert = value),
-                    ),
-                    if (!useSelfSignedCert) ...[
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          // TODO: 选择证书文件
-                        },
-                        icon: const Icon(Icons.file_upload),
-                        label: const Text('选择证书文件'),
-                      ),
-                      const SizedBox(height: 8),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          // TODO: 选择私钥文件
-                        },
-                        icon: const Icon(Icons.file_upload),
-                        label: const Text('选择私钥文件'),
-                      ),
-                    ],
-                  ],
-                  const SizedBox(height: 16),
-                  // root路径
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: rootController,
-                          decoration: const InputDecoration(
-                            labelText: 'root路径',
-                            hintText: '项目根目录路径',
-                            border: OutlineInputBorder(),
-                          ),
-                          readOnly: true,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          final result = await FilePicker.platform
-                              .getDirectoryPath();
-                          if (result != null) {
-                            setState(() {
-                              rootController.text = result;
-                            });
-                          }
-                        },
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // 伪静态规则
-                  DropdownButtonFormField<String>(
-                    value: selectedRewriteRule,
-                    decoration: const InputDecoration(
-                      labelText: '伪静态规则',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem(value: null, child: Text('无')),
-                      ...rewriteRules.map(
-                        (rule) =>
-                            DropdownMenuItem(value: rule, child: Text(rule)),
-                      ),
-                    ],
-                    onChanged: (value) =>
-                        setState(() => selectedRewriteRule = value),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final serverName = serverNameController.text.trim();
-                final port = portController.text.trim();
-                final sslPort = sslPortController.text.trim();
-                final root = rootController.text.trim();
-
-                // 验证root路径
-                if (root.isEmpty) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: 'root路径不能为空',
-                  );
-                  return;
-                }
-
-                // 验证server_name和port
-                final validationError = _validateServerNameAndPort(
-                  serverName,
-                  port,
-                  enableSsl,
-                  sslPort,
-                );
-                if (validationError != null) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: validationError,
-                  );
-                  return;
-                }
-
-                Navigator.of(context).pop({
-                  'serverName': serverName,
-                  'port': port,
-                  'enableSsl': enableSsl,
-                  'sslPort': sslPort,
-                  'useSelfSignedCert': useSelfSignedCert,
-                  'certPath': certPath,
-                  'keyPath': keyPath,
-                  'root': root,
-                  'rewriteRule': selectedRewriteRule,
-                });
-              },
-              child: const Text('确定'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 显示静态项目nginx配置对话框
-  Future<Map<String, dynamic>?> _showStaticNginxConfigDialog(
-    String projectName,
-  ) async {
-    final defaultServerName = _generateDefaultServerName(projectName);
-    final serverNameController = TextEditingController(text: defaultServerName);
-    final portController = TextEditingController(text: '80');
-    bool enableSsl = false;
-    final sslPortController = TextEditingController(text: '443');
-    bool useSelfSignedCert = false;
-    String? certPath;
-    String? keyPath;
-    final rootController = TextEditingController();
-    final customRulesController = TextEditingController();
-
-    return showDialog<Map<String, dynamic>>(
-      context: context,
-      useRootNavigator: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('配置nginx'),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 20,
-          ),
-          content: SizedBox(
-            width: 500,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // server_name
-                  Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: TextField(
-                      controller: serverNameController,
-                      decoration: const InputDecoration(
-                        labelText: 'server_name',
-                        hintText: '例如: example.localhost',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // 端口
-                  TextField(
-                    controller: portController,
-                    decoration: const InputDecoration(
-                      labelText: '端口',
-                      hintText: '默认: 80',
-                      border: OutlineInputBorder(),
-                    ),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 16),
-                  // SSL开关
-                  SwitchListTile(
-                    title: const Text('启用SSL'),
-                    value: enableSsl,
-                    onChanged: (value) => setState(() => enableSsl = value),
-                  ),
-                  if (enableSsl) ...[
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: sslPortController,
-                      decoration: const InputDecoration(
-                        labelText: 'SSL端口',
-                        hintText: '默认: 443',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 16),
-                    SwitchListTile(
-                      title: const Text('使用自签证书'),
-                      value: useSelfSignedCert,
-                      onChanged: (value) =>
-                          setState(() => useSelfSignedCert = value),
-                    ),
-                    if (!useSelfSignedCert) ...[
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          // TODO: 选择证书文件
-                        },
-                        icon: const Icon(Icons.file_upload),
-                        label: const Text('选择证书文件'),
-                      ),
-                      const SizedBox(height: 8),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          // TODO: 选择私钥文件
-                        },
-                        icon: const Icon(Icons.file_upload),
-                        label: const Text('选择私钥文件'),
-                      ),
-                    ],
-                  ],
-                  const SizedBox(height: 16),
-                  // root路径
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: rootController,
-                          decoration: const InputDecoration(
-                            labelText: 'root路径',
-                            hintText: '项目根目录路径',
-                            border: OutlineInputBorder(),
-                          ),
-                          readOnly: true,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: () async {
-                          final result = await FilePicker.platform
-                              .getDirectoryPath();
-                          if (result != null) {
-                            setState(() {
-                              rootController.text = result;
-                            });
-                          }
-                        },
-                        icon: const Icon(Icons.folder_open),
-                        label: const Text('选择'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // 自定义规则
-                  TextField(
-                    controller: customRulesController,
-                    decoration: const InputDecoration(
-                      labelText: '自定义server{}块规则',
-                      hintText: '可选，留空则不添加',
-                      border: OutlineInputBorder(),
-                    ),
-                    maxLines: 5,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final serverName = serverNameController.text.trim();
-                final port = portController.text.trim();
-                final sslPort = sslPortController.text.trim();
-                final root = rootController.text.trim();
-
-                // 验证root路径
-                if (root.isEmpty) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: 'root路径不能为空',
-                  );
-                  return;
-                }
-
-                // 验证server_name和port
-                final validationError = _validateServerNameAndPort(
-                  serverName,
-                  port,
-                  enableSsl,
-                  sslPort,
-                );
-                if (validationError != null) {
-                  await NotificationService.showError(
-                    title: '验证失败',
-                    message: validationError,
-                  );
-                  return;
-                }
-
-                Navigator.of(context).pop({
-                  'serverName': serverName,
-                  'port': port,
-                  'enableSsl': enableSsl,
-                  'sslPort': sslPort,
-                  'useSelfSignedCert': useSelfSignedCert,
-                  'certPath': certPath,
-                  'keyPath': keyPath,
-                  'root': root,
-                  'customRules': customRulesController.text.trim(),
-                });
-              },
-              child: const Text('确定'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // 已移除：_showNormalPhpNginxConfigDialog - 已由 NginxConfigPage 替代
+  // 已移除：_showStaticNginxConfigDialog - 已由 NginxConfigPage 替代
 
   /// 检查端口是否被占用
   Future<bool> _isPortInUse(int port) async {
@@ -2982,10 +2555,12 @@ class _ConsolePageState extends State<ConsolePage> {
   }
 
   /// 确保PHP配置文件存在
+  /// [port] 如果提供，则使用该端口更新配置；如果为null，则获取可用端口
   Future<void> _ensurePhpConfigExists(
     String nginxDir,
-    String phpVersionId,
-  ) async {
+    String phpVersionId, [
+    int? port,
+  ]) async {
     final phpConfPath = path.join(
       nginxDir,
       'conf',
@@ -2993,6 +2568,9 @@ class _ConsolePageState extends State<ConsolePage> {
       '$phpVersionId.conf',
     );
     final phpConfFile = File(phpConfPath);
+
+    // 如果没有提供端口，获取可用端口
+    port ??= await _getAvailablePhpPort(phpVersionId);
 
     if (!await phpConfFile.exists()) {
       // 复制示例文件
@@ -3006,8 +2584,6 @@ class _ConsolePageState extends State<ConsolePage> {
 
       if (await exampleFile.exists()) {
         final content = await exampleFile.readAsString();
-        // 获取可用端口
-        final port = await _getAvailablePhpPort(phpVersionId);
         // 替换第三行的#--#为端口
         final lines = content.split('\n');
         if (lines.length >= 3) {
@@ -3016,19 +2592,649 @@ class _ConsolePageState extends State<ConsolePage> {
         await phpConfFile.writeAsString(lines.join('\n'));
       }
     } else {
-      // 如果文件已存在，检查端口配置
+      // 如果文件已存在，更新端口配置
       final content = await phpConfFile.readAsString();
-      final portMatch = RegExp(r'listen\s+(\d+)').firstMatch(content);
-      if (portMatch == null) {
-        // 没有端口配置，需要添加
-        final port = await _getAvailablePhpPort(phpVersionId);
-        final lines = content.split('\n');
-        if (lines.length >= 3) {
-          lines[2] = lines[2].replaceAll('#--#', port.toString());
+      final lines = content.split('\n');
+      // 查找包含listen的行并更新端口
+      bool portUpdated = false;
+      for (int i = 0; i < lines.length; i++) {
+        if (lines[i].contains('listen') && lines[i].contains('#')) {
+          // 如果包含#--#占位符，替换它
+          if (lines[i].contains('#--#')) {
+            lines[i] = lines[i].replaceAll('#--#', port.toString());
+            portUpdated = true;
+            break;
+          }
+        } else if (RegExp(r'listen\s+\d+').hasMatch(lines[i])) {
+          // 如果已有端口配置，更新它
+          lines[i] = lines[i].replaceAll(
+            RegExp(r'listen\s+\d+'),
+            'listen $port',
+          );
+          portUpdated = true;
+          break;
         }
-        await phpConfFile.writeAsString(lines.join('\n'));
       }
+
+      // 如果没有找到listen行，在第三行添加（如果存在）
+      if (!portUpdated && lines.length >= 3) {
+        if (lines[2].contains('#--#')) {
+          lines[2] = lines[2].replaceAll('#--#', port.toString());
+        } else {
+          // 在第三行后插入listen配置
+          lines.insert(2, '    listen $port;');
+        }
+      }
+
+      await phpConfFile.writeAsString(lines.join('\n'));
     }
+  }
+
+  /// 检查端口是否被指定进程占用
+  /// 返回进程ID，如果未找到则返回null
+  /// [spawnerExe] php-cgi-spawner.exe的完整路径，用于判断是否为PHP进程占用
+  /// 如果端口被其他进程占用，返回-1表示端口被占用但不是PHP进程
+  Future<int?> _getPortProcessId(int port, String? spawnerExe) async {
+    try {
+      // 第一步：使用 netstat 获取 PID
+      final netstatResult = await Process.run('cmd', [
+        '/c',
+        'netstat -ano | findstr :$port',
+      ], runInShell: true);
+
+      final netstatOutput = netstatResult.stdout.toString();
+      if (netstatOutput.isEmpty) {
+        // 端口未被占用
+        return null;
+      }
+
+      // 解析 netstat 输出，提取 PID（最后一列）
+      final lines = netstatOutput.split('\n');
+      int? pid;
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        if (trimmedLine.isEmpty) continue;
+
+        // netstat 输出格式：TCP    0.0.0.0:9016    0.0.0.0:0    LISTENING    1234
+        final parts = trimmedLine.split(RegExp(r'\s+'));
+        if (parts.length >= 5 && parts[3] == 'LISTENING') {
+          final parsedPid = int.tryParse(parts.last);
+          if (parsedPid != null) {
+            pid = parsedPid;
+            break; // 找到第一个 PID 即可
+          }
+        }
+      }
+
+      if (pid == null) {
+        // 未找到 PID
+        return null;
+      }
+
+      // 如果 spawnerExe 为 null，直接返回 PID
+      if (spawnerExe == null) {
+        return pid;
+      }
+
+      // 第二步：使用 PowerShell 获取 exe 路径
+      final psCommand =
+          '(Get-Process -Id $pid -ErrorAction SilentlyContinue).Path';
+      final psResult = await Process.run('powershell', [
+        '-NoProfile',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        psCommand,
+      ], runInShell: true);
+
+      final exePath = psResult.stdout.toString().trim();
+      if (exePath.isEmpty) {
+        // 无法获取进程路径，返回 PID（可能是权限问题）
+        return pid;
+      }
+
+      // 判断 exe 是否为 spawnerExe（需要规范化路径进行比较）
+      final normalizedExePath = exePath.replaceAll('\\', '/').toLowerCase();
+      final normalizedSpawnerExe = spawnerExe
+          .replaceAll('\\', '/')
+          .toLowerCase();
+
+      if (normalizedExePath == normalizedSpawnerExe) {
+        // 是 PHP 进程，返回 PID
+        return pid;
+      } else {
+        // 不是 PHP 进程，端口被其他程序占用
+        return -1;
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('检查端口进程失败: $e');
+      }
+      return null;
+    }
+  }
+
+  /// 获取PHP目录
+  Future<String?> _getPhpDirectory(String phpId) async {
+    final storagePath = await ConfigService.getStoragePath();
+    if (storagePath == null) return null;
+
+    final phpDir = Directory(path.join(storagePath, 'php', phpId));
+    if (!await phpDir.exists()) return null;
+
+    return phpDir.path;
+  }
+
+  /// 启动PHP
+  Future<void> _startPhp(Software server) async {
+    try {
+      // 检查是否有暂存的PID，如果有则先停止旧进程
+      final existingPid = _phpProcessIds[server.id];
+      if (existingPid != null) {
+        if (kDebugMode) {
+          print('[PHP启动] 发现暂存的PID: $existingPid，先停止旧进程');
+        }
+        try {
+          await Process.run('taskkill', [
+            '/F',
+            '/T',
+            '/PID',
+            existingPid.toString(),
+          ], runInShell: true);
+        } catch (e) {
+          if (kDebugMode) {
+            print('[PHP启动] 停止旧进程失败（可能进程已不存在）: $e');
+          }
+        }
+        // 清除暂存的PID
+        _phpProcessIds.remove(server.id);
+      }
+
+      final phpDir = await _getPhpDirectory(server.id);
+      if (phpDir == null) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'PHP未安装或目录不存在',
+        );
+        return;
+      }
+
+      final spawnerExe = path.join(phpDir, 'php-cgi-spawner.exe');
+      final spawnerFile = File(spawnerExe);
+      if (!await spawnerFile.exists()) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '找不到php-cgi-spawner.exe文件',
+        );
+        return;
+      }
+      // 读取或创建端口配置
+      final prefs = await SharedPreferences.getInstance();
+      final portKey = 'php_port_${server.id}';
+      int? port = prefs.getInt(portKey);
+
+      if (port == null) {
+        if (kDebugMode) {
+          print('[PHP启动] 未找到端口配置，开始创建配置');
+        }
+        // 没有端口配置，需要创建
+        final nginxDir = await _getNginxDirectory();
+        if (nginxDir == null) {
+          if (kDebugMode) {
+            print('[PHP启动失败] nginx未安装，无法创建PHP配置');
+          }
+          await NotificationService.showError(
+            title: '启动失败',
+            message: 'nginx未安装，无法创建PHP配置',
+          );
+          return;
+        }
+
+        // 获取可用端口
+        port = await _getAvailablePhpPort(server.id);
+        if (kDebugMode) {
+          print('[PHP启动] 获取到可用端口: $port');
+        }
+        // 确保PHP配置文件存在
+        await _ensurePhpConfigExists(nginxDir, server.id);
+      } else {
+        if (kDebugMode) {
+          print('[PHP启动] 使用已配置的端口: $port');
+        }
+      }
+
+      // 执行启动命令: .\php-cgi-spawner.exe "php-cgi.exe -c php.ini" 运行端口 4
+      final command = '$spawnerExe "php-cgi.exe -c php.ini" $port 4';
+      print('[PHP启动] 执行命令: $command');
+
+      final process = await Process.start(
+        'powershell',
+        ['-NoProfile', '-Command', command],
+        runInShell: true,
+        workingDirectory: phpDir,
+      );
+
+      // 消费 stdout（即使为空）
+      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
+        if (data.isNotEmpty) {
+          print('[PHP启动] stdout: $data');
+        }
+      });
+
+      // 消费 stderr
+      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
+        if (data.isNotEmpty) {
+          print('[PHP启动] stderr: $data');
+        }
+      });
+
+      // ★ 唯一的完成信号：等待命令执行完毕
+      final exitCode = await process.exitCode;
+      print('[PHP启动] PowerShell 命令执行完成，退出码: $exitCode');
+
+      // 等待一小段时间让 php-cgi-spawner.exe 进程启动并绑定端口
+      await Future.delayed(const Duration(milliseconds: 2000));
+
+      // 检查端口是否被php-cgi-spawner.exe占用
+      final processId = await _getPortProcessId(port, spawnerExe);
+
+      if (processId != null && processId > 0) {
+        // processId > 0 表示是PHP进程
+        if (kDebugMode) {
+          print('[PHP启动成功] 端口 $port 被php-cgi-spawner.exe占用，进程ID: $processId');
+        }
+        // 启动成功
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+          _phpProcessIds[server.id] = processId;
+        });
+
+        await NotificationService.showSuccess(
+          title: '启动成功',
+          message: '${server.name} 已启动（端口: $port）',
+        );
+      } else if (processId == -1) {
+        // processId == -1 表示端口被其他进程占用
+        if (kDebugMode) {
+          print('[PHP启动失败] 端口 $port 被其他进程占用');
+        }
+        final nginxDir = await _getNginxDirectory();
+        if (nginxDir == null) {
+          if (kDebugMode) {
+            print('[PHP启动失败] 端口被占用，但nginx未安装，无法重新分配端口');
+          }
+          await NotificationService.showError(
+            title: '启动失败',
+            message: '端口被占用，但nginx未安装，无法重新分配端口',
+          );
+          return;
+        }
+
+        // 重新获取可用端口
+        final newPort = await _getAvailablePhpPort(server.id);
+        if (kDebugMode) {
+          print('[PHP启动] 重新分配端口: $port -> $newPort');
+        }
+        // 更新PHP配置文件
+        await _ensurePhpConfigExists(nginxDir, server.id, newPort);
+
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '端口 $port 被占用，已重新分配端口为 $newPort，请重试',
+        );
+      } else {
+        // processId == null 表示端口未被占用
+        if (kDebugMode) {
+          print('[PHP启动失败] 端口 $port 未被占用，可能是PHP安装有问题或启动命令执行失败');
+          print('$processId');
+        }
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'PHP启动失败，请检查PHP安装是否正确，或尝试重新安装PHP',
+        );
+      }
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        print('[PHP启动失败] 发生异常: $e');
+        print('[PHP启动失败] 堆栈跟踪: $stackTrace');
+      }
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 停止PHP
+  Future<void> _stopPhp(Software server) async {
+    try {
+      int? processId = _phpProcessIds[server.id];
+
+      // 如果没有暂存的PID，尝试通过端口查找进程
+      if (processId == null) {
+        if (kDebugMode) {
+          print('[PHP停止] 未找到暂存的PID，尝试通过端口查找进程');
+        }
+
+        // 获取PHP目录和spawnerExe路径
+        final phpDir = await _getPhpDirectory(server.id);
+        if (phpDir != null) {
+          final spawnerExe = path.join(phpDir, 'php-cgi-spawner.exe');
+
+          // 获取端口
+          final prefs = await SharedPreferences.getInstance();
+          final portKey = 'php_port_${server.id}';
+          final port = prefs.getInt(portKey);
+
+          if (port != null) {
+            // 通过端口查找进程
+            final foundPid = await _getPortProcessId(port, spawnerExe);
+            if (foundPid != null && foundPid > 0) {
+              processId = foundPid;
+              if (kDebugMode) {
+                print('[PHP停止] 通过端口找到进程ID: $processId');
+              }
+            }
+          }
+        }
+      }
+
+      if (processId == null) {
+        // 仍然找不到PID，可能进程已经停止
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _phpProcessIds.remove(server.id);
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 进程可能已经停止',
+        );
+        return;
+      }
+
+      if (kDebugMode) {
+        print('[PHP停止] 正在停止进程ID: $processId');
+      }
+
+      // 使用 taskkill 结束进程树
+      final result = await Process.run('taskkill', [
+        '/F',
+        '/T',
+        '/PID',
+        processId.toString(),
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        if (kDebugMode) {
+          print('[PHP停止] 进程树已成功终止');
+        }
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _phpProcessIds.remove(server.id);
+        });
+
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '${server.name} 已停止',
+        );
+      } else {
+        // 进程可能已经不存在
+        if (kDebugMode) {
+          print('[PHP停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
+        }
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _phpProcessIds.remove(server.id);
+        });
+
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 进程可能已经停止',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[PHP停止失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 重启PHP
+  Future<void> _restartPhp(Software server) async {
+    // 先停止
+    await _stopPhp(server);
+    // 等待一小段时间
+    await Future.delayed(const Duration(milliseconds: 500));
+    // 再启动
+    await _startPhp(server);
+  }
+
+  /// 获取MySQL目录
+  Future<String?> _getMysqlDirectory(String mysqlId) async {
+    final storagePath = await ConfigService.getStoragePath();
+    if (storagePath == null) return null;
+
+    // MySQL可能在servers或databases目录下
+    final serversDir = Directory(path.join(storagePath, 'servers', mysqlId));
+    final databasesDir = Directory(
+      path.join(storagePath, 'databases', mysqlId),
+    );
+
+    if (await serversDir.exists()) {
+      return serversDir.path;
+    } else if (await databasesDir.exists()) {
+      return databasesDir.path;
+    }
+
+    return null;
+  }
+
+  /// 启动MySQL
+  Future<void> _startMysql(Software server) async {
+    try {
+      final mysqlDir = await _getMysqlDirectory(server.id);
+      if (mysqlDir == null) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'MySQL未安装或目录不存在',
+        );
+        return;
+      }
+
+      // 步骤1: 先执行 sc stop mysql（停止服务）
+      if (kDebugMode) {
+        print('[MySQL启动] 执行 sc stop mysql');
+      }
+      final stopResult = await Process.run('sc', [
+        'stop',
+        'mysql',
+      ], runInShell: true);
+
+      // 忽略停止失败的错误（服务可能未运行）
+      if (stopResult.exitCode != 0) {
+        if (kDebugMode) {
+          print('[MySQL启动] sc stop mysql 退出码: ${stopResult.exitCode}');
+        }
+      } else {
+        if (kDebugMode) {
+          print('[MySQL启动] MySQL服务已停止');
+        }
+        // 等待一小段时间确保服务完全停止
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+
+      // 步骤2: 尝试启动服务
+      if (kDebugMode) {
+        print('[MySQL启动] 执行 sc start mysql');
+      }
+      final startResult = await Process.run('sc', [
+        'start',
+        'mysql',
+      ], runInShell: true);
+
+      // 检查是否报错 "[SC] OpenService 失败 1060:指定的服务未安装。"
+      final errorOutput = startResult.stderr.toString();
+      if (errorOutput.contains('1060') ||
+          errorOutput.contains('指定的服务未安装') ||
+          errorOutput.toLowerCase().contains('service does not exist')) {
+        // 服务未安装，需要安装服务
+        if (kDebugMode) {
+          print('[MySQL启动] MySQL服务未安装，开始安装服务');
+        }
+
+        final mysqldExe = path.join(mysqlDir, 'bin', 'mysqld.exe');
+        final mysqldFile = File(mysqldExe);
+        if (!await mysqldFile.exists()) {
+          await NotificationService.showError(
+            title: '启动失败',
+            message: '找不到mysqld.exe文件: $mysqldExe',
+          );
+          return;
+        }
+
+        // 执行 mysqld -install
+        if (kDebugMode) {
+          print('[MySQL启动] 执行 mysqld -install');
+        }
+        final installResult = await Process.run(
+          mysqldExe,
+          ['-install'],
+          runInShell: true,
+          workingDirectory: mysqlDir,
+        );
+
+        if (installResult.exitCode != 0) {
+          final installError = installResult.stderr.toString();
+          await NotificationService.showError(
+            title: '启动失败',
+            message: '安装MySQL服务失败: $installError',
+          );
+          return;
+        }
+
+        if (kDebugMode) {
+          print('[MySQL启动] MySQL服务安装成功');
+        }
+
+        // 等待一小段时间确保服务安装完成
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // 再次尝试启动服务
+        if (kDebugMode) {
+          print('[MySQL启动] 再次执行 sc start mysql');
+        }
+        final retryStartResult = await Process.run('sc', [
+          'start',
+          'mysql',
+        ], runInShell: true);
+
+        if (retryStartResult.exitCode == 0) {
+          setState(() {
+            _serverRunningStatus[server.id] = true;
+          });
+          await NotificationService.showSuccess(
+            title: '启动成功',
+            message: '${server.name} 已启动',
+          );
+        } else {
+          final retryError = retryStartResult.stderr.toString();
+          await NotificationService.showError(
+            title: '启动失败',
+            message: '启动MySQL服务失败: $retryError',
+          );
+        }
+      } else if (startResult.exitCode == 0) {
+        // 启动成功
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+        });
+        await NotificationService.showSuccess(
+          title: '启动成功',
+          message: '${server.name} 已启动',
+        );
+      } else {
+        // 启动失败
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '启动MySQL服务失败: $errorOutput',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[MySQL启动失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 停止MySQL
+  Future<void> _stopMysql(Software server) async {
+    try {
+      // 执行 sc stop mysql
+      if (kDebugMode) {
+        print('[MySQL停止] 执行 sc stop mysql');
+      }
+      final result = await Process.run('sc', [
+        'stop',
+        'mysql',
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+        });
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '${server.name} 已停止',
+        );
+      } else {
+        final errorOutput = result.stderr.toString();
+        // 如果服务未运行或服务尚未启动，也视为成功
+        if (errorOutput.contains('1062') ||
+            errorOutput.contains('服务尚未启动') ||
+            errorOutput.toLowerCase().contains('service does not exist') ||
+            errorOutput.contains('指定的服务未安装') ||
+            errorOutput.toLowerCase().contains('not running')) {
+          setState(() {
+            _serverRunningStatus[server.id] = false;
+          });
+          await NotificationService.showInfo(
+            title: '提示',
+            message: '${server.name} 服务未运行',
+          );
+        } else {
+          await NotificationService.showError(
+            title: '停止失败',
+            message: '停止 ${server.name} 失败: $errorOutput',
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[MySQL停止失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 重启MySQL
+  Future<void> _restartMysql(Software server) async {
+    // 先停止
+    await _stopMysql(server);
+    // 等待一小段时间
+    await Future.delayed(const Duration(milliseconds: 500));
+    // 再启动
+    await _startMysql(server);
   }
 
   /// 生成SSL自签证书

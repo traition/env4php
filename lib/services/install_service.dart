@@ -711,6 +711,25 @@ class InstallService {
         }
       }
 
+      // MySQL 特殊处理：初始化数据库并清理注册表
+      if (software.cate4 != null && software.cate4!.toLowerCase() == 'mysql') {
+        onProgress?.call('正在初始化 MySQL...', 0.98, '开始初始化 MySQL 数据库...');
+        final mysqlInitResult = await _initializeMysql(
+          softwareDir.path,
+          onProgress: onProgress,
+        );
+        if (!mysqlInitResult.$1) {
+          // MySQL 初始化失败，但不影响安装成功（因为文件已安装）
+          onProgress?.call(
+            'MySQL 初始化警告',
+            0.99,
+            '警告: ${mysqlInitResult.$2 ?? "MySQL 初始化失败，但安装已完成"}',
+          );
+        } else {
+          onProgress?.call('MySQL 初始化完成', 0.99, 'MySQL 数据库初始化完成');
+        }
+      }
+
       onProgress?.call('安装完成', 1.0, '安装完成！');
       return (true, null, calculatedHash);
     } catch (e) {
@@ -3121,6 +3140,74 @@ class InstallService {
         }
       }
       return (false, 'PHP 安装失败: $e', calculatedHash);
+    }
+  }
+
+  /// MySQL 初始化处理
+  /// [mysqlDir] MySQL 安装目录路径
+  /// [onProgress] 进度回调
+  /// 返回 (是否成功, 错误信息)
+  static Future<(bool success, String? error)> _initializeMysql(
+    String mysqlDir, {
+    Function(String step, double progress, String? logMessage)? onProgress,
+  }) async {
+    try {
+      // 步骤1: 执行 mysqld --initialize-insecure
+      onProgress?.call(
+        '正在初始化 MySQL...',
+        0.98,
+        '执行 mysqld --initialize-insecure...',
+      );
+      final mysqldExe = path.join(mysqlDir, 'bin', 'mysqld.exe');
+      final mysqldFile = File(mysqldExe);
+
+      if (!await mysqldFile.exists()) {
+        return (false, '未找到 mysqld.exe 文件: $mysqldExe');
+      }
+
+      final result = await Process.run(
+        mysqldExe,
+        ['--initialize-insecure'],
+        runInShell: true,
+        workingDirectory: mysqlDir,
+      );
+
+      if (result.exitCode != 0) {
+        final errorOutput = result.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call('MySQL 初始化警告', 0.98, 'mysqld 初始化输出: $errorOutput');
+        }
+        // 即使退出码非0，也继续执行后续步骤（某些情况下可能已经初始化成功）
+      } else {
+        onProgress?.call('MySQL 初始化', 0.98, 'mysqld 初始化完成');
+      }
+
+      // 步骤1.5: 执行 mysqld -install
+      onProgress?.call('正在安装 MySQL 服务...', 0.982, '执行 mysqld -install...');
+      final installResult = await Process.run(
+        mysqldExe,
+        ['-install'],
+        runInShell: true,
+        workingDirectory: mysqlDir,
+      );
+
+      if (installResult.exitCode != 0) {
+        final errorOutput = installResult.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call(
+            'MySQL 服务安装警告',
+            0.982,
+            'mysqld -install 输出: $errorOutput',
+          );
+        }
+        // 即使退出码非0，也继续执行后续步骤（服务可能已经安装）
+      } else {
+        onProgress?.call('MySQL 服务安装', 0.982, 'mysqld 服务安装完成');
+      }
+
+      return (true, null);
+    } catch (e) {
+      return (false, 'MySQL 初始化失败: $e');
     }
   }
 }

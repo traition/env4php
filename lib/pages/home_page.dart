@@ -8,6 +8,7 @@ import '../widgets/title_bar.dart';
 import '../services/config_service.dart';
 import '../services/software_source_service.dart';
 import '../services/notification_service.dart';
+import '../services/icon_service.dart';
 import '../widgets/storage_path_dialog.dart';
 import '../models/software_model.dart';
 import 'console_page.dart';
@@ -391,37 +392,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 获取工具图标路径
+  /// 获取图标路径，使用 IconService 统一处理
   Future<String?> _getIconPath(Software software) async {
-    try {
-      // 获取应用可执行文件目录
-      final executablePath = Platform.resolvedExecutable;
-      final executableDir = path.dirname(executablePath);
-      final iconsDir = path.join(executableDir, 'assets', 'icons');
-
-      // 确定图标文件名
-      String? iconFileName;
-      if (software.cate4 != null && software.cate4!.isNotEmpty) {
-        // 使用 cate4 值作为文件名
-        iconFileName = '${software.cate4}.png';
-      } else {
-        // 没有 cate4 值，不显示图标
-        return null;
-      }
-
-      // 构建完整路径
-      final iconPath = path.join(iconsDir, iconFileName);
-      final iconFile = File(iconPath);
-
-      // 检查文件是否存在
-      if (await iconFile.exists()) {
-        return iconPath;
-      }
-
-      return null;
-    } catch (e) {
-      // 出错时返回 null，不显示图标
-      return null;
-    }
+    return await IconService.getIconPath(software);
   }
 
   Widget _getCurrentPage() {

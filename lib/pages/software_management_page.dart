@@ -8,6 +8,7 @@ import '../services/config_service.dart';
 import '../services/software_source_service.dart';
 import '../services/install_service.dart';
 import '../services/notification_service.dart';
+import '../services/icon_service.dart';
 import '../utils/software_menu_helper.dart';
 import '../widgets/storage_path_dialog.dart';
 
@@ -552,76 +553,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
     );
   }
 
-  /// 获取软件的分类名称
-  String? _getSoftwareCategory(Software software) {
-    if (_selectedTabIndex == 0) {
-      // 已安装页面，需要从软件源中查找分类
-      if (_softwareSource == null) return null;
-
-      if (_softwareSource!.servers.any((s) => s.id == software.id)) {
-        return 'servers';
-      } else if (_softwareSource!.databases.any((s) => s.id == software.id)) {
-        return 'databases';
-      } else if (_softwareSource!.php.any((s) => s.id == software.id)) {
-        return 'php';
-      } else if (_softwareSource!.tools.any((s) => s.id == software.id)) {
-        return 'tools';
-      }
-      return null;
-    } else {
-      // 其他页面，根据选中的 tab 确定分类
-      switch (_selectedTabIndex) {
-        case 1:
-          return 'servers';
-        case 2:
-          return 'databases';
-        case 3:
-          return 'php';
-        case 4:
-          return 'tools';
-        default:
-          return null;
-      }
-    }
-  }
+  // 已移除：_getSoftwareCategory - 已由 IconService 统一处理
 
   /// 获取图标文件路径
+  /// 获取图标路径，使用 IconService 统一处理
   Future<String?> _getIconPath(Software software) async {
-    try {
-      // 获取应用可执行文件目录
-      final executablePath = Platform.resolvedExecutable;
-      final executableDir = path.dirname(executablePath);
-      final iconsDir = path.join(executableDir, 'assets', 'icons');
-
-      // 确定图标文件名
-      String? iconFileName;
-      final category = _getSoftwareCategory(software);
-
-      if (category == 'php') {
-        // PHP 分类直接使用 php.png
-        iconFileName = 'php.png';
-      } else if (software.cate4 != null && software.cate4!.isNotEmpty) {
-        // 其他分类使用 cate4 值作为文件名
-        iconFileName = '${software.cate4}.png';
-      } else {
-        // 没有 cate4 值，不显示图标
-        return null;
-      }
-
-      // 构建完整路径
-      final iconPath = path.join(iconsDir, iconFileName);
-      final iconFile = File(iconPath);
-
-      // 检查文件是否存在
-      if (await iconFile.exists()) {
-        return iconPath;
-      }
-
-      return null;
-    } catch (e) {
-      // 出错时返回 null，不显示图标
-      return null;
-    }
+    return await IconService.getIconPath(software, softwareSource: _softwareSource);
   }
 
   Widget _buildSoftwareCard(Software software) {
