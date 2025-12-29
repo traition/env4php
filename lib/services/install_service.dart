@@ -3183,10 +3183,10 @@ class InstallService {
       }
 
       // 步骤1.5: 执行 mysqld -install
-      onProgress?.call('正在安装 MySQL 服务...', 0.982, '执行 mysqld -install...');
+      onProgress?.call('正在安装 MySQL 服务...', 0.982, '执行 mysqld install...');
       final installResult = await Process.run(
         mysqldExe,
-        ['-install'],
+        ['--install-manual'],
         runInShell: true,
         workingDirectory: mysqlDir,
       );

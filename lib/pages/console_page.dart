@@ -59,6 +59,10 @@ class _ConsolePageState extends State<ConsolePage> {
   final Map<String, int> _phpProcessIds = {};
   // 跟踪已安装的PHP软件ID列表（用于快速判断是否为PHP）
   final Set<String> _installedPhpIds = {};
+  // 跟踪每个Redis应用的进程ID
+  final Map<String, int> _redisProcessIds = {};
+  // 跟踪每个Rudis应用的进程ID
+  final Map<String, int> _rudisProcessIds = {};
 
   @override
   void initState() {
@@ -208,7 +212,9 @@ class _ConsolePageState extends State<ConsolePage> {
       final isImplemented =
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql';
+          server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'redis' ||
+          server.cate4?.toLowerCase() == 'rudis';
 
       if (!isImplemented) {
         // 未实现的服务器类型，跳过
@@ -252,7 +258,9 @@ class _ConsolePageState extends State<ConsolePage> {
       final isImplemented =
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql';
+          server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'redis' ||
+          server.cate4?.toLowerCase() == 'rudis';
 
       if (isImplemented && _serverRunningStatus[server.id] == true) {
         successCount++;
@@ -294,7 +302,9 @@ class _ConsolePageState extends State<ConsolePage> {
       final isImplemented =
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql';
+          server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'redis' ||
+          server.cate4?.toLowerCase() == 'rudis';
 
       if (!isImplemented) {
         // 未实现的服务器类型，跳过
@@ -338,7 +348,9 @@ class _ConsolePageState extends State<ConsolePage> {
       final isImplemented =
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql';
+          server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'redis' ||
+          server.cate4?.toLowerCase() == 'rudis';
 
       if (isImplemented && _serverRunningStatus[server.id] != true) {
         successCount++;
@@ -435,6 +447,12 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (server.cate4?.toLowerCase() == 'mysql') {
         // MySQL启动逻辑
         await _startMysql(server);
+      } else if (server.cate4?.toLowerCase() == 'redis') {
+        // Redis启动逻辑
+        await _startRedis(server);
+      } else if (server.cate4?.toLowerCase() == 'rudis') {
+        // Rudis启动逻辑
+        await _startRudis(server);
       } else {
         // 其他服务器类型暂未实现
         setState(() {
@@ -505,6 +523,12 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (server.cate4?.toLowerCase() == 'mysql') {
         // MySQL停止逻辑
         await _stopMysql(server);
+      } else if (server.cate4?.toLowerCase() == 'redis') {
+        // Redis停止逻辑
+        await _stopRedis(server);
+      } else if (server.cate4?.toLowerCase() == 'rudis') {
+        // Rudis停止逻辑
+        await _stopRudis(server);
       } else {
         // 其他服务器类型暂未实现
         setState(() {
@@ -580,6 +604,12 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (server.cate4?.toLowerCase() == 'mysql') {
         // MySQL重启逻辑
         await _restartMysql(server);
+      } else if (server.cate4?.toLowerCase() == 'redis') {
+        // Redis重启逻辑
+        await _restartRedis(server);
+      } else if (server.cate4?.toLowerCase() == 'rudis') {
+        // Rudis重启逻辑
+        await _restartRudis(server);
       } else {
         // 其他服务器类型暂未实现
         await NotificationService.showInfo(
@@ -3235,6 +3265,589 @@ class _ConsolePageState extends State<ConsolePage> {
     await Future.delayed(const Duration(milliseconds: 500));
     // 再启动
     await _startMysql(server);
+  }
+
+  /// 获取Redis目录
+  Future<String?> _getRedisDirectory(String redisId) async {
+    final storagePath = await ConfigService.getStoragePath();
+    if (storagePath == null) return null;
+
+    // Redis可能在servers或databases目录下
+    final serversDir = Directory(path.join(storagePath, 'servers', redisId));
+    final databasesDir = Directory(
+      path.join(storagePath, 'databases', redisId),
+    );
+
+    if (await serversDir.exists()) {
+      return serversDir.path;
+    } else if (await databasesDir.exists()) {
+      return databasesDir.path;
+    }
+
+    return null;
+  }
+
+  /// 启动Redis
+  Future<void> _startRedis(Software server) async {
+    try {
+      // 检查是否有暂存的PID，如果有则先停止旧进程
+      final existingPid = _redisProcessIds[server.id];
+      if (existingPid != null) {
+        if (kDebugMode) {
+          print('[Redis启动] 发现暂存的PID: $existingPid，先停止旧进程');
+        }
+        try {
+          await Process.run('taskkill', [
+            '/F',
+            '/T',
+            '/PID',
+            existingPid.toString(),
+          ], runInShell: true);
+        } catch (e) {
+          if (kDebugMode) {
+            print('[Redis启动] 停止旧进程失败（可能进程已不存在）: $e');
+          }
+        }
+        // 清除暂存的PID
+        _redisProcessIds.remove(server.id);
+      }
+
+      final redisDir = await _getRedisDirectory(server.id);
+      if (redisDir == null) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'Redis未安装或目录不存在',
+        );
+        return;
+      }
+
+      final redisServerExe = path.join(redisDir, 'redis-server.exe');
+      final redisServerFile = File(redisServerExe);
+      if (!await redisServerFile.exists()) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '找不到redis-server.exe文件: $redisServerExe',
+        );
+        return;
+      }
+
+      final redisConf = path.join(redisDir, 'redis.windows.conf');
+      final redisConfFile = File(redisConf);
+      if (!await redisConfFile.exists()) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '找不到redis.windows.conf文件: $redisConf',
+        );
+        return;
+      }
+
+      // 执行启动命令: redis-server.exe redis.windows.conf
+      if (kDebugMode) {
+        print('[Redis启动] 执行命令: $redisServerExe $redisConf');
+      }
+
+      final process = await Process.start(
+        redisServerExe,
+        [redisConf],
+        workingDirectory: redisDir,
+        mode: ProcessStartMode.normal,
+      );
+
+      // 记录进程ID
+      final pid = process.pid;
+      if (kDebugMode) {
+        print('[Redis启动] 进程ID: $pid');
+      }
+
+      // 监听输出以判断启动是否成功
+      bool startupSuccess = false;
+      bool startupFailed = false;
+
+      // 消费 stdout
+      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
+        if (data.contains('Ready to accept connections')) {
+          startupSuccess = true;
+        }
+        if (data.contains('Could not create server TCP listening socket')) {
+          startupFailed = true;
+        }
+      });
+
+      // 消费 stderr
+      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
+        if (kDebugMode) {
+          print('[Redis启动] stderr: $data');
+        }
+        if (data.contains('Could not create server TCP listening socket')) {
+          startupFailed = true;
+        }
+      });
+
+      // 等待一段时间以便 Redis 启动并输出日志
+      await Future.delayed(const Duration(seconds: 3));
+
+      if (startupSuccess) {
+        // 启动成功
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+          _redisProcessIds[server.id] = pid;
+        });
+
+        await NotificationService.showSuccess(
+          title: '启动成功',
+          message: '${server.name} 已启动（进程ID: $pid）',
+        );
+      } else if (startupFailed) {
+        // 启动失败
+        // 杀死进程
+        try {
+          await Process.run('taskkill', [
+            '/F',
+            '/T',
+            '/PID',
+            pid.toString(),
+          ], runInShell: true);
+        } catch (e) {
+          if (kDebugMode) {
+            print('[Redis启动失败] 清理进程失败: $e');
+          }
+        }
+
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'Redis启动失败: 端口被占用', //$errorMessage
+        );
+      } else {
+        // 未检测到明确的成功或失败信号，暂存PID并提示用户
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+          _redisProcessIds[server.id] = pid;
+        });
+
+        await NotificationService.showInfo(
+          title: '启动完成',
+          message: '${server.name} 启动命令已执行（进程ID: $pid）',
+        );
+      }
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        print('[Redis启动失败] 发生异常: $e');
+        print('[Redis启动失败] 堆栈跟踪: $stackTrace');
+      }
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 停止Redis
+  Future<void> _stopRedis(Software server) async {
+    try {
+      int? processId = _redisProcessIds[server.id];
+
+      if (processId == null) {
+        // 尝试通过进程名查找
+        if (kDebugMode) {
+          print('[Redis停止] 未找到暂存的PID，尝试通过进程名查找');
+        }
+
+        final result = await Process.run('tasklist', [
+          '/FI',
+          'IMAGENAME eq redis-server.exe',
+          '/FO',
+          'CSV',
+          '/NH',
+        ], runInShell: true);
+
+        final output = result.stdout.toString();
+        if (output.isNotEmpty && output.contains('redis-server.exe')) {
+          // 解析PID（CSV格式："进程名","PID","会话名","会话#","内存使用"）
+          final lines = output.split('\n');
+          for (final line in lines) {
+            if (line.contains('redis-server.exe')) {
+              final parts = line.split(',');
+              if (parts.length >= 2) {
+                final pidStr = parts[1].replaceAll('"', '').trim();
+                processId = int.tryParse(pidStr);
+                if (processId != null) {
+                  if (kDebugMode) {
+                    print('[Redis停止] 通过进程名找到进程ID: $processId');
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (processId == null) {
+        // 仍然找不到PID，可能进程已经停止
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _redisProcessIds.remove(server.id);
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 进程可能已经停止',
+        );
+        return;
+      }
+
+      if (kDebugMode) {
+        print('[Redis停止] 正在停止进程ID: $processId');
+      }
+
+      // 使用 taskkill 结束进程树
+      final result = await Process.run('taskkill', [
+        '/F',
+        '/T',
+        '/PID',
+        processId.toString(),
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        if (kDebugMode) {
+          print('[Redis停止] 进程树已成功终止');
+        }
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _redisProcessIds.remove(server.id);
+        });
+
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '${server.name} 已停止',
+        );
+      } else {
+        // 进程可能已经不存在
+        if (kDebugMode) {
+          print('[Redis停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
+        }
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _redisProcessIds.remove(server.id);
+        });
+
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 进程可能已经停止',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[Redis停止失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 重启Redis
+  Future<void> _restartRedis(Software server) async {
+    // 先停止
+    await _stopRedis(server);
+    // 等待一小段时间
+    await Future.delayed(const Duration(milliseconds: 500));
+    // 再启动
+    await _startRedis(server);
+  }
+
+  /// 获取Rudis目录
+  Future<String?> _getRudisDirectory(String rudisId) async {
+    final storagePath = await ConfigService.getStoragePath();
+    if (storagePath == null) return null;
+
+    // Rudis可能在servers或databases目录下
+    final serversDir = Directory(path.join(storagePath, 'servers', rudisId));
+    final databasesDir = Directory(
+      path.join(storagePath, 'databases', rudisId),
+    );
+
+    if (await serversDir.exists()) {
+      return serversDir.path;
+    } else if (await databasesDir.exists()) {
+      return databasesDir.path;
+    }
+
+    return null;
+  }
+
+  /// 启动Rudis
+  Future<void> _startRudis(Software server) async {
+    try {
+      // 检查是否有暂存的PID，如果有则先停止旧进程
+      final existingPid = _rudisProcessIds[server.id];
+      if (existingPid != null) {
+        if (kDebugMode) {
+          print('[Rudis启动] 发现暂存的PID: $existingPid，先停止旧进程');
+        }
+        try {
+          await Process.run('taskkill', [
+            '/F',
+            '/T',
+            '/PID',
+            existingPid.toString(),
+          ], runInShell: true);
+        } catch (e) {
+          if (kDebugMode) {
+            print('[Rudis启动] 停止旧进程失败（可能进程已不存在）: $e');
+          }
+        }
+        // 清除暂存的PID
+        _rudisProcessIds.remove(server.id);
+      }
+
+      final rudisDir = await _getRudisDirectory(server.id);
+      if (rudisDir == null) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'Rudis未安装或目录不存在',
+        );
+        return;
+      }
+
+      final rudisServerExe = path.join(rudisDir, 'rudis-server.exe');
+      final rudisServerFile = File(rudisServerExe);
+      if (!await rudisServerFile.exists()) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '找不到rudis-server.exe文件: $rudisServerExe',
+        );
+        return;
+      }
+
+      final rudisConf = path.join(rudisDir, 'rudis.conf');
+      final rudisConfFile = File(rudisConf);
+      if (!await rudisConfFile.exists()) {
+        await NotificationService.showError(
+          title: '启动失败',
+          message: '找不到rudis.conf文件: $rudisConf',
+        );
+        return;
+      }
+
+      // 执行启动命令: rudis-server.exe --config .\rudis.conf
+      if (kDebugMode) {
+        print('[Rudis启动] 执行命令: $rudisServerExe --config .\\rudis.conf');
+      }
+
+      final process = await Process.start(
+        rudisServerExe,
+        ['--config', '.\\rudis.conf'],
+        workingDirectory: rudisDir,
+        mode: ProcessStartMode.normal,
+      );
+
+      // 记录进程ID
+      final pid = process.pid;
+      if (kDebugMode) {
+        print('[Rudis启动] 进程ID: $pid');
+      }
+
+      // 监听输出以判断启动是否成功
+      bool startupSuccess = false;
+      bool startupFailed = false;
+
+      // 消费 stdout
+      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
+        if (data.contains('Ready to accept connections')) {
+          startupSuccess = true;
+        }
+        if (data.contains('Failed to bind to address')) {
+          startupFailed = true;
+        }
+      });
+
+      // 消费 stderr（Rudis 的成功消息在 stderr 中输出）
+      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
+        if (kDebugMode) {
+          print('[Rudis启动] stderr: $data');
+        }
+        // 检查成功消息（在 stderr 中）
+        if (data.contains('Ready to accept connections')) {
+          startupSuccess = true;
+        }
+        // 检查失败消息
+        if (data.contains('Failed to bind to address')) {
+          startupFailed = true;
+        }
+      });
+
+      // 等待一段时间以便 Rudis 启动并输出日志
+      await Future.delayed(const Duration(seconds: 3));
+
+      if (startupSuccess) {
+        // 启动成功
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+          _rudisProcessIds[server.id] = pid;
+        });
+
+        await NotificationService.showSuccess(
+          title: '启动成功',
+          message: '${server.name} 已启动（进程ID: $pid）',
+        );
+      } else if (startupFailed) {
+        // 启动失败
+        // 杀死进程
+        try {
+          await Process.run('taskkill', [
+            '/F',
+            '/T',
+            '/PID',
+            pid.toString(),
+          ], runInShell: true);
+        } catch (e) {
+          if (kDebugMode) {
+            print('[Rudis启动失败] 清理进程失败: $e');
+          }
+        }
+
+        await NotificationService.showError(
+          title: '启动失败',
+          message: 'Rudis启动失败: 端口被占用',
+        );
+      } else {
+        // 未检测到明确的成功或失败信号，暂存PID并提示用户
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+          _rudisProcessIds[server.id] = pid;
+        });
+
+        await NotificationService.showInfo(
+          title: '启动完成',
+          message: '${server.name} 启动命令已执行（进程ID: $pid）',
+        );
+      }
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        print('[Rudis启动失败] 发生异常: $e');
+        print('[Rudis启动失败] 堆栈跟踪: $stackTrace');
+      }
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 停止Rudis
+  Future<void> _stopRudis(Software server) async {
+    try {
+      int? processId = _rudisProcessIds[server.id];
+
+      if (processId == null) {
+        // 尝试通过进程名查找
+        if (kDebugMode) {
+          print('[Rudis停止] 未找到暂存的PID，尝试通过进程名查找');
+        }
+
+        final result = await Process.run('tasklist', [
+          '/FI',
+          'IMAGENAME eq rudis-server.exe',
+          '/FO',
+          'CSV',
+          '/NH',
+        ], runInShell: true);
+
+        final output = result.stdout.toString();
+        if (output.isNotEmpty && output.contains('rudis-server.exe')) {
+          // 解析PID（CSV格式："进程名","PID","会话名","会话#","内存使用"）
+          final lines = output.split('\n');
+          for (final line in lines) {
+            if (line.contains('rudis-server.exe')) {
+              final parts = line.split(',');
+              if (parts.length >= 2) {
+                final pidStr = parts[1].replaceAll('"', '').trim();
+                processId = int.tryParse(pidStr);
+                if (processId != null) {
+                  if (kDebugMode) {
+                    print('[Rudis停止] 通过进程名找到进程ID: $processId');
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (processId == null) {
+        // 仍然找不到PID，可能进程已经停止
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _rudisProcessIds.remove(server.id);
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 进程可能已经停止',
+        );
+        return;
+      }
+
+      if (kDebugMode) {
+        print('[Rudis停止] 正在停止进程ID: $processId');
+      }
+
+      // 使用 taskkill 结束进程树
+      final result = await Process.run('taskkill', [
+        '/F',
+        '/T',
+        '/PID',
+        processId.toString(),
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        if (kDebugMode) {
+          print('[Rudis停止] 进程树已成功终止');
+        }
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _rudisProcessIds.remove(server.id);
+        });
+
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '${server.name} 已停止',
+        );
+      } else {
+        // 进程可能已经不存在
+        if (kDebugMode) {
+          print('[Rudis停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
+        }
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+          _rudisProcessIds.remove(server.id);
+        });
+
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 进程可能已经停止',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[Rudis停止失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 重启Rudis
+  Future<void> _restartRudis(Software server) async {
+    // 先停止
+    await _stopRudis(server);
+    // 等待一小段时间
+    await Future.delayed(const Duration(milliseconds: 500));
+    // 再启动
+    await _startRudis(server);
   }
 
   /// 生成SSL自签证书
