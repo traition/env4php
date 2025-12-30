@@ -320,6 +320,147 @@ class SoftwareActionService {
     }
   }
 
+  /// 编辑 postgresql.conf
+  static Future<void> editPgsqlConf(
+    Software software, {
+    required BuildContext context,
+    SoftwareSource? softwareSource,
+  }) async {
+    final softwareDir = await getSoftwareDirectory(
+      software,
+      softwareSource: softwareSource,
+    );
+    if (softwareDir == null) {
+      await NotificationService.showError(
+        title: '错误',
+        message: '无法获取软件目录',
+      );
+      return;
+    }
+
+    final configFile = File(path.join(softwareDir, 'data', 'postgresql.conf'));
+    if (!await configFile.exists()) {
+      await NotificationService.showError(
+        title: '错误',
+        message: 'postgresql.conf 文件不存在: ${configFile.path}',
+      );
+      return;
+    }
+
+    try {
+      final filePath = configFile.path.replaceAll('/', '\\');
+      final command = 'explorer "$filePath"';
+      final result = await Process.run(
+        'powershell',
+        ['-Command', command],
+        runInShell: true,
+      );
+
+      if (result.exitCode != 0 && result.stderr.toString().isNotEmpty) {
+        throw Exception('命令执行失败: ${result.stderr}');
+      }
+    } catch (e) {
+      await NotificationService.showError(
+        title: '错误',
+        message: '无法打开文件: $e',
+      );
+    }
+  }
+
+  /// 编辑 pg_hba.conf
+  static Future<void> editPgsqlHba(
+    Software software, {
+    required BuildContext context,
+    SoftwareSource? softwareSource,
+  }) async {
+    final softwareDir = await getSoftwareDirectory(
+      software,
+      softwareSource: softwareSource,
+    );
+    if (softwareDir == null) {
+      await NotificationService.showError(
+        title: '错误',
+        message: '无法获取软件目录',
+      );
+      return;
+    }
+
+    final configFile = File(path.join(softwareDir, 'data', 'pg_hba.conf'));
+    if (!await configFile.exists()) {
+      await NotificationService.showError(
+        title: '错误',
+        message: 'pg_hba.conf 文件不存在: ${configFile.path}',
+      );
+      return;
+    }
+
+    try {
+      final filePath = configFile.path.replaceAll('/', '\\');
+      final command = 'explorer "$filePath"';
+      final result = await Process.run(
+        'powershell',
+        ['-Command', command],
+        runInShell: true,
+      );
+
+      if (result.exitCode != 0 && result.stderr.toString().isNotEmpty) {
+        throw Exception('命令执行失败: ${result.stderr}');
+      }
+    } catch (e) {
+      await NotificationService.showError(
+        title: '错误',
+        message: '无法打开文件: $e',
+      );
+    }
+  }
+
+  /// 编辑 pg_ident.conf
+  static Future<void> editPgsqlIdent(
+    Software software, {
+    required BuildContext context,
+    SoftwareSource? softwareSource,
+  }) async {
+    final softwareDir = await getSoftwareDirectory(
+      software,
+      softwareSource: softwareSource,
+    );
+    if (softwareDir == null) {
+      await NotificationService.showError(
+        title: '错误',
+        message: '无法获取软件目录',
+      );
+      return;
+    }
+
+    final configFile = File(path.join(softwareDir, 'data', 'pg_ident.conf'));
+    if (!await configFile.exists()) {
+      await NotificationService.showError(
+        title: '错误',
+        message: 'pg_ident.conf 文件不存在: ${configFile.path}',
+      );
+      return;
+    }
+
+    try {
+      final filePath = configFile.path.replaceAll('/', '\\');
+      final command = 'explorer "$filePath"';
+      final result = await Process.run(
+        'powershell',
+        ['-Command', command],
+        runInShell: true,
+      );
+
+      if (result.exitCode != 0 && result.stderr.toString().isNotEmpty) {
+        throw Exception('命令执行失败: ${result.stderr}');
+      }
+    } catch (e) {
+      await NotificationService.showError(
+        title: '错误',
+        message: '无法打开文件: $e',
+      );
+    }
+  }
+
   /// 设为 php-cli 版本
   static Future<void> setPhpCliVersion(
     Software software, {
@@ -519,6 +660,27 @@ class SoftwareActionService {
           break;
         case SoftwareMenuAction.editMongodbConfig:
           await editMongodbConfig(
+            software,
+            context: context,
+            softwareSource: softwareSource,
+          );
+          break;
+        case SoftwareMenuAction.editPgsqlConf:
+          await editPgsqlConf(
+            software,
+            context: context,
+            softwareSource: softwareSource,
+          );
+          break;
+        case SoftwareMenuAction.editPgsqlHba:
+          await editPgsqlHba(
+            software,
+            context: context,
+            softwareSource: softwareSource,
+          );
+          break;
+        case SoftwareMenuAction.editPgsqlIdent:
+          await editPgsqlIdent(
             software,
             context: context,
             softwareSource: softwareSource,

@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import '../models/software_model.dart';
@@ -727,6 +726,49 @@ class InstallService {
           );
         } else {
           onProgress?.call('MySQL 初始化完成', 0.99, 'MySQL 数据库初始化完成');
+        }
+      }
+
+      // PostgreSQL 特殊处理：初始化数据库并注册服务
+      if (software.cate4 != null && software.cate4!.toLowerCase() == 'pgsql') {
+        onProgress?.call(
+          '正在初始化 PostgreSQL...',
+          0.98,
+          '开始初始化 PostgreSQL 数据库...',
+        );
+        final pgsqlInitResult = await _initializePgsql(
+          softwareDir.path,
+          onProgress: onProgress,
+        );
+        if (!pgsqlInitResult.$1) {
+          // PostgreSQL 初始化失败，但不影响安装成功（因为文件已安装）
+          onProgress?.call(
+            'PostgreSQL 初始化警告',
+            0.99,
+            '警告: ${pgsqlInitResult.$2 ?? "PostgreSQL 初始化失败，但安装已完成"}',
+          );
+        } else {
+          onProgress?.call('PostgreSQL 初始化完成', 0.99, 'PostgreSQL 数据库初始化完成');
+        }
+      }
+
+      // MongoDB 特殊处理：注册服务并配置启动方式
+      if (software.cate4 != null &&
+          software.cate4!.toLowerCase() == 'mongodb') {
+        onProgress?.call('正在初始化 MongoDB...', 0.98, '开始初始化 MongoDB 服务...');
+        final mongodbInitResult = await _initializeMongodb(
+          softwareDir.path,
+          onProgress: onProgress,
+        );
+        if (!mongodbInitResult.$1) {
+          // MongoDB 初始化失败，但不影响安装成功（因为文件已安装）
+          onProgress?.call(
+            'MongoDB 初始化警告',
+            0.99,
+            '警告: ${mongodbInitResult.$2 ?? "MongoDB 初始化失败，但安装已完成"}',
+          );
+        } else {
+          onProgress?.call('MongoDB 初始化完成', 0.99, 'MongoDB 服务初始化完成');
         }
       }
 
@@ -1749,12 +1791,11 @@ class InstallService {
             } catch (e) {
               print('  无法列出目录内容: $e');
             }
-            print('\n请在调试控制台输入 "c" 并按回车继续...');
 
             // 使用 debugger() 断点暂停，检查临时目录后按 F5 继续
-            if (kDebugMode) {
-              developer.debugger(message: '附件解压完成，检查临时目录后按 F5 继续');
-            }
+            // if (kDebugMode) {
+            //   developer.debugger(message: '附件解压完成，检查临时目录后按 F5 继续');
+            // }
 
             // 同时提供控制台输入方式（如果可用）
             String? input;
@@ -3208,6 +3249,198 @@ class InstallService {
       return (true, null);
     } catch (e) {
       return (false, 'MySQL 初始化失败: $e');
+    }
+  }
+
+  /// PostgreSQL 初始化处理
+  /// [pgsqlDir] PostgreSQL 安装目录路径
+  /// [onProgress] 进度回调
+  /// 返回 (是否成功, 错误信息)
+  static Future<(bool success, String? error)> _initializePgsql(
+    String pgsqlDir, {
+    Function(String step, double progress, String? logMessage)? onProgress,
+  }) async {
+    try {
+      // 步骤1: 执行 initdb.exe -D "pgsql目录\data" -E UTF-8 -U postgres
+      onProgress?.call('正在初始化 PostgreSQL...', 0.98, '执行 initdb.exe 初始化数据库...');
+      final initdbExe = path.join(pgsqlDir, 'bin', 'initdb.exe');
+      final initdbFile = File(initdbExe);
+
+      if (!await initdbFile.exists()) {
+        return (false, '未找到 initdb.exe 文件: $initdbExe');
+      }
+
+      final dataDir = path.join(pgsqlDir, 'data');
+      final initdbResult = await Process.run(
+        initdbExe,
+        ['-D', dataDir, '-E', 'UTF-8', '-U', 'postgres'],
+        runInShell: true,
+        workingDirectory: pgsqlDir,
+      );
+
+      if (initdbResult.exitCode != 0) {
+        final errorOutput = initdbResult.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call(
+            'PostgreSQL 初始化警告',
+            0.98,
+            'initdb 初始化输出: $errorOutput',
+          );
+        }
+        // 即使退出码非0，也继续执行后续步骤（某些情况下可能已经初始化成功）
+      } else {
+        onProgress?.call('PostgreSQL 初始化', 0.98, 'initdb 初始化完成');
+      }
+
+      // 步骤2: 执行 pg_ctl.exe register -D "pgsql目录\data" -N PostgreSQL
+      onProgress?.call(
+        '正在注册 PostgreSQL 服务...',
+        0.985,
+        '执行 pg_ctl.exe register...',
+      );
+      final pgCtlExe = path.join(pgsqlDir, 'bin', 'pg_ctl.exe');
+      final pgCtlFile = File(pgCtlExe);
+
+      if (!await pgCtlFile.exists()) {
+        return (false, '未找到 pg_ctl.exe 文件: $pgCtlExe');
+      }
+
+      final registerResult = await Process.run(
+        pgCtlExe,
+        ['register', '-D', dataDir, '-N', 'PostgreSQL'],
+        runInShell: true,
+        workingDirectory: pgsqlDir,
+      );
+
+      if (registerResult.exitCode != 0) {
+        final errorOutput = registerResult.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call(
+            'PostgreSQL 服务注册警告',
+            0.985,
+            'pg_ctl register 输出: $errorOutput',
+          );
+        }
+        // 即使退出码非0，也继续执行后续步骤（服务可能已经注册）
+      } else {
+        onProgress?.call('PostgreSQL 服务注册', 0.985, 'pg_ctl register 完成');
+      }
+
+      // 步骤3: 执行 sc config PostgreSQL start= demand
+      onProgress?.call(
+        '正在配置 PostgreSQL 服务...',
+        0.99,
+        '执行 sc config PostgreSQL start= demand...',
+      );
+      final configResult = await Process.run('sc', [
+        'config',
+        'PostgreSQL',
+        'start=',
+        'demand',
+      ], runInShell: true);
+
+      if (configResult.exitCode != 0) {
+        final errorOutput = configResult.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call(
+            'PostgreSQL 服务配置警告',
+            0.99,
+            'sc config 输出: $errorOutput',
+          );
+        }
+        // 即使退出码非0，也继续（服务可能已经配置）
+      } else {
+        onProgress?.call('PostgreSQL 服务配置', 0.99, 'sc config 完成');
+      }
+
+      return (true, null);
+    } catch (e) {
+      return (false, 'PostgreSQL 初始化失败: $e');
+    }
+  }
+
+  /// MongoDB 初始化处理
+  /// [mongodbDir] MongoDB 安装目录路径
+  /// [onProgress] 进度回调
+  /// 返回 (是否成功, 错误信息)
+  static Future<(bool success, String? error)> _initializeMongodb(
+    String mongodbDir, {
+    Function(String step, double progress, String? logMessage)? onProgress,
+  }) async {
+    try {
+      // 步骤1: 执行 mongod --config "mongodb目录\mongod.cfg" --install --serviceName "MongoDB"
+      onProgress?.call('正在注册 MongoDB 服务...', 0.98, '执行 mongod --install...');
+      // 先检查根目录，如果不存在再检查 bin 目录
+      String mongodExe = path.join(mongodbDir, 'mongod.exe');
+      File mongodFile = File(mongodExe);
+
+      if (!await mongodFile.exists()) {
+        // 如果根目录不存在，检查 bin 目录
+        mongodExe = path.join(mongodbDir, 'bin', 'mongod.exe');
+        mongodFile = File(mongodExe);
+        if (!await mongodFile.exists()) {
+          return (false, '未找到 mongod.exe 文件（已检查根目录和 bin 目录）');
+        }
+      }
+
+      final mongodCfg = path.join(mongodbDir, 'mongod.cfg');
+      final mongodCfgFile = File(mongodCfg);
+
+      if (!await mongodCfgFile.exists()) {
+        return (false, '未找到 mongod.cfg 文件: $mongodCfg');
+      }
+
+      final installResult = await Process.run(
+        mongodExe,
+        ['--config', mongodCfg, '--install', '--serviceName', 'MongoDB'],
+        runInShell: true,
+        workingDirectory: mongodbDir,
+      );
+
+      if (installResult.exitCode != 0) {
+        final errorOutput = installResult.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call(
+            'MongoDB 服务注册警告',
+            0.98,
+            'mongod --install 输出: $errorOutput',
+          );
+        }
+        // 即使退出码非0，也继续执行后续步骤（服务可能已经注册）
+      } else {
+        onProgress?.call('MongoDB 服务注册', 0.98, 'mongod --install 完成');
+      }
+
+      // 步骤2: 执行 sc config MongoDB start= demand
+      onProgress?.call(
+        '正在配置 MongoDB 服务...',
+        0.99,
+        '执行 sc config MongoDB start= demand...',
+      );
+      final configResult = await Process.run('sc', [
+        'config',
+        'MongoDB',
+        'start=',
+        'demand',
+      ], runInShell: true);
+
+      if (configResult.exitCode != 0) {
+        final errorOutput = configResult.stderr.toString();
+        if (errorOutput.isNotEmpty) {
+          onProgress?.call(
+            'MongoDB 服务配置警告',
+            0.99,
+            'sc config 输出: $errorOutput',
+          );
+        }
+        // 即使退出码非0，也继续（服务可能已经配置）
+      } else {
+        onProgress?.call('MongoDB 服务配置', 0.99, 'sc config 完成');
+      }
+
+      return (true, null);
+    } catch (e) {
+      return (false, 'MongoDB 初始化失败: $e');
     }
   }
 }

@@ -12,6 +12,9 @@ enum SoftwareMenuAction {
   editRudisConfig,
   editMysqlIni,
   editMongodbConfig,
+  editPgsqlConf,
+  editPgsqlHba,
+  editPgsqlIdent,
   setPhpCliVersion,
   editPhpIni,
   installPhpExtension,
@@ -71,6 +74,7 @@ class SoftwareMenuHelper {
     final isRedis = software.cate4?.toLowerCase() == 'redis';
     final isRudis = software.cate4?.toLowerCase() == 'rudis';
     final isMysql = software.cate4?.toLowerCase() == 'mysql';
+    final isPgsql = software.cate4?.toLowerCase() == 'pgsql';
     final isMongodb = software.cate4?.toLowerCase() == 'mongodb';
     final isPhp = softwareSource != null &&
         softwareSource.php.any((s) => s.id == software.id);
@@ -115,6 +119,26 @@ class SoftwareMenuHelper {
       items.add(SoftwareMenuItem(
         action: SoftwareMenuAction.editMysqlIni,
         label: '编辑ini',
+        icon: Icons.edit,
+      ));
+      items.add(SoftwareMenuItem.divider());
+    }
+
+    // PostgreSQL 专用选项
+    if (isPgsql) {
+      items.add(SoftwareMenuItem(
+        action: SoftwareMenuAction.editPgsqlConf,
+        label: '编辑 postgresql.conf',
+        icon: Icons.edit,
+      ));
+      items.add(SoftwareMenuItem(
+        action: SoftwareMenuAction.editPgsqlHba,
+        label: '编辑 pg_hba.conf',
+        icon: Icons.edit,
+      ));
+      items.add(SoftwareMenuItem(
+        action: SoftwareMenuAction.editPgsqlIdent,
+        label: '编辑 pg_ident.conf',
         icon: Icons.edit,
       ));
       items.add(SoftwareMenuItem.divider());
@@ -180,6 +204,7 @@ class SoftwareMenuHelper {
     final isRedis = software.cate4?.toLowerCase() == 'redis';
     final isRudis = software.cate4?.toLowerCase() == 'rudis';
     final isMysql = software.cate4?.toLowerCase() == 'mysql';
+    final isPgsql = software.cate4?.toLowerCase() == 'pgsql';
     final isMongodb = software.cate4?.toLowerCase() == 'mongodb';
     final isPhp = softwareSource != null &&
         softwareSource.php.any((s) => s.id == software.id);
@@ -248,6 +273,41 @@ class SoftwareMenuHelper {
           onTap: () {
             Navigator.of(context).pop();
             onAction(SoftwareMenuAction.editMysqlIni);
+          },
+        ),
+      );
+      items.add(const Divider());
+    }
+
+    // PostgreSQL 专用选项
+    if (isPgsql) {
+      items.add(
+        ListTile(
+          leading: const Icon(Icons.edit),
+          title: const Text('编辑 postgresql.conf'),
+          onTap: () {
+            Navigator.of(context).pop();
+            onAction(SoftwareMenuAction.editPgsqlConf);
+          },
+        ),
+      );
+      items.add(
+        ListTile(
+          leading: const Icon(Icons.edit),
+          title: const Text('编辑 pg_hba.conf'),
+          onTap: () {
+            Navigator.of(context).pop();
+            onAction(SoftwareMenuAction.editPgsqlHba);
+          },
+        ),
+      );
+      items.add(
+        ListTile(
+          leading: const Icon(Icons.edit),
+          title: const Text('编辑 pg_ident.conf'),
+          onTap: () {
+            Navigator.of(context).pop();
+            onAction(SoftwareMenuAction.editPgsqlIdent);
           },
         ),
       );

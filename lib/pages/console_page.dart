@@ -213,6 +213,8 @@ class _ConsolePageState extends State<ConsolePage> {
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
           server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'pgsql' ||
+          server.cate4?.toLowerCase() == 'mongodb' ||
           server.cate4?.toLowerCase() == 'redis' ||
           server.cate4?.toLowerCase() == 'rudis';
 
@@ -259,6 +261,8 @@ class _ConsolePageState extends State<ConsolePage> {
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
           server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'pgsql' ||
+          server.cate4?.toLowerCase() == 'mongodb' ||
           server.cate4?.toLowerCase() == 'redis' ||
           server.cate4?.toLowerCase() == 'rudis';
 
@@ -303,6 +307,8 @@ class _ConsolePageState extends State<ConsolePage> {
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
           server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'pgsql' ||
+          server.cate4?.toLowerCase() == 'mongodb' ||
           server.cate4?.toLowerCase() == 'redis' ||
           server.cate4?.toLowerCase() == 'rudis';
 
@@ -349,6 +355,8 @@ class _ConsolePageState extends State<ConsolePage> {
           server.cate4?.toLowerCase() == 'nginx' ||
           _installedPhpIds.contains(server.id) ||
           server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'pgsql' ||
+          server.cate4?.toLowerCase() == 'mongodb' ||
           server.cate4?.toLowerCase() == 'redis' ||
           server.cate4?.toLowerCase() == 'rudis';
 
@@ -447,6 +455,12 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (server.cate4?.toLowerCase() == 'mysql') {
         // MySQL启动逻辑
         await _startMysql(server);
+      } else if (server.cate4?.toLowerCase() == 'pgsql') {
+        // PostgreSQL启动逻辑
+        await _startPgsql(server);
+      } else if (server.cate4?.toLowerCase() == 'mongodb') {
+        // MongoDB启动逻辑
+        await _startMongodb(server);
       } else if (server.cate4?.toLowerCase() == 'redis') {
         // Redis启动逻辑
         await _startRedis(server);
@@ -523,6 +537,12 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (server.cate4?.toLowerCase() == 'mysql') {
         // MySQL停止逻辑
         await _stopMysql(server);
+      } else if (server.cate4?.toLowerCase() == 'pgsql') {
+        // PostgreSQL停止逻辑
+        await _stopPgsql(server);
+      } else if (server.cate4?.toLowerCase() == 'mongodb') {
+        // MongoDB停止逻辑
+        await _stopMongodb(server);
       } else if (server.cate4?.toLowerCase() == 'redis') {
         // Redis停止逻辑
         await _stopRedis(server);
@@ -604,6 +624,12 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (server.cate4?.toLowerCase() == 'mysql') {
         // MySQL重启逻辑
         await _restartMysql(server);
+      } else if (server.cate4?.toLowerCase() == 'pgsql') {
+        // PostgreSQL重启逻辑
+        await _restartPgsql(server);
+      } else if (server.cate4?.toLowerCase() == 'mongodb') {
+        // MongoDB重启逻辑
+        await _restartMongodb(server);
       } else if (server.cate4?.toLowerCase() == 'redis') {
         // Redis重启逻辑
         await _restartRedis(server);
@@ -3265,6 +3291,340 @@ class _ConsolePageState extends State<ConsolePage> {
     await Future.delayed(const Duration(milliseconds: 500));
     // 再启动
     await _startMysql(server);
+  }
+
+  /// 检查PostgreSQL服务状态
+  /// 返回 true 如果服务正在运行，false 如果服务已停止或不存在
+  Future<bool> _isPgsqlServiceRunning() async {
+    try {
+      final result = await Process.run('sc', [
+        'query',
+        'PostgreSQL',
+      ], runInShell: true);
+
+      if (result.exitCode != 0) {
+        // 服务不存在或查询失败
+        return false;
+      }
+
+      final output = result.stdout.toString();
+      // 检查服务状态，如果包含 "RUNNING" 则表示服务正在运行
+      return output.contains('RUNNING');
+    } catch (e) {
+      if (kDebugMode) {
+        print('[PostgreSQL状态检查] 发生异常: $e');
+      }
+      return false;
+    }
+  }
+
+  /// 启动PostgreSQL
+  Future<void> _startPgsql(Software server) async {
+    try {
+      // 先检查服务是否已经启动
+      final isRunning = await _isPgsqlServiceRunning();
+      if (isRunning) {
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 服务已经启动',
+        );
+        return;
+      }
+
+      // 执行 net start PostgreSQL
+      if (kDebugMode) {
+        print('[PostgreSQL启动] 执行 net start PostgreSQL');
+      }
+      final result = await Process.run('net', [
+        'start',
+        'PostgreSQL',
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        // 启动成功
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+        });
+        await NotificationService.showSuccess(
+          title: '启动成功',
+          message: '${server.name} 已启动',
+        );
+      } else {
+        final errorOutput = result.stderr.toString();
+        // 检查是否服务已经启动
+        final output = result.stdout.toString() + errorOutput;
+        if (output.toLowerCase().contains('already started') ||
+            output.toLowerCase().contains('已经启动') ||
+            output.toLowerCase().contains('is already running')) {
+          setState(() {
+            _serverRunningStatus[server.id] = true;
+          });
+          await NotificationService.showInfo(
+            title: '提示',
+            message: '${server.name} 服务已经启动',
+          );
+        } else {
+          await NotificationService.showError(
+            title: '启动失败',
+            message: '启动 ${server.name} 失败: $errorOutput',
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[PostgreSQL启动失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 停止PostgreSQL
+  Future<void> _stopPgsql(Software server) async {
+    try {
+      // 先检查服务是否已经停止
+      final isRunning = await _isPgsqlServiceRunning();
+      if (!isRunning) {
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 服务已经停止',
+        );
+        return;
+      }
+
+      // 执行 net stop PostgreSQL
+      if (kDebugMode) {
+        print('[PostgreSQL停止] 执行 net stop PostgreSQL');
+      }
+      final result = await Process.run('net', [
+        'stop',
+        'PostgreSQL',
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+        });
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '${server.name} 已停止',
+        );
+      } else {
+        final errorOutput = result.stderr.toString();
+        // 检查是否服务已经停止
+        final output = result.stdout.toString() + errorOutput;
+        if (output.toLowerCase().contains('not started') ||
+            output.toLowerCase().contains('尚未启动') ||
+            output.toLowerCase().contains('is not running') ||
+            output.toLowerCase().contains('not running')) {
+          setState(() {
+            _serverRunningStatus[server.id] = false;
+          });
+          await NotificationService.showInfo(
+            title: '提示',
+            message: '${server.name} 服务已经停止',
+          );
+        } else {
+          await NotificationService.showError(
+            title: '停止失败',
+            message: '停止 ${server.name} 失败: $errorOutput',
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[PostgreSQL停止失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 重启PostgreSQL
+  Future<void> _restartPgsql(Software server) async {
+    // 先停止
+    await _stopPgsql(server);
+    // 等待一小段时间
+    await Future.delayed(const Duration(milliseconds: 500));
+    // 再启动
+    await _startPgsql(server);
+  }
+
+  /// 检查MongoDB服务状态
+  /// 返回 true 如果服务正在运行，false 如果服务已停止或不存在
+  Future<bool> _isMongodbServiceRunning() async {
+    try {
+      final result = await Process.run('sc', [
+        'query',
+        'MongoDB',
+      ], runInShell: true);
+
+      if (result.exitCode != 0) {
+        // 服务不存在或查询失败
+        return false;
+      }
+
+      final output = result.stdout.toString();
+      // 检查服务状态，如果包含 "RUNNING" 则表示服务正在运行
+      return output.contains('RUNNING');
+    } catch (e) {
+      if (kDebugMode) {
+        print('[MongoDB状态检查] 发生异常: $e');
+      }
+      return false;
+    }
+  }
+
+  /// 启动MongoDB
+  Future<void> _startMongodb(Software server) async {
+    try {
+      // 先检查服务是否已经启动
+      final isRunning = await _isMongodbServiceRunning();
+      if (isRunning) {
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 服务已经启动',
+        );
+        return;
+      }
+
+      // 执行 net start MongoDB
+      if (kDebugMode) {
+        print('[MongoDB启动] 执行 net start MongoDB');
+      }
+      final result = await Process.run('net', [
+        'start',
+        'MongoDB',
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        // 启动成功
+        setState(() {
+          _serverRunningStatus[server.id] = true;
+        });
+        await NotificationService.showSuccess(
+          title: '启动成功',
+          message: '${server.name} 已启动',
+        );
+      } else {
+        final errorOutput = result.stderr.toString();
+        // 检查是否服务已经启动
+        final output = result.stdout.toString() + errorOutput;
+        if (output.toLowerCase().contains('already started') ||
+            output.toLowerCase().contains('已经启动') ||
+            output.toLowerCase().contains('is already running')) {
+          setState(() {
+            _serverRunningStatus[server.id] = true;
+          });
+          await NotificationService.showInfo(
+            title: '提示',
+            message: '${server.name} 服务已经启动',
+          );
+        } else {
+          await NotificationService.showError(
+            title: '启动失败',
+            message: '启动 ${server.name} 失败: $errorOutput',
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[MongoDB启动失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 停止MongoDB
+  Future<void> _stopMongodb(Software server) async {
+    try {
+      // 先检查服务是否已经停止
+      final isRunning = await _isMongodbServiceRunning();
+      if (!isRunning) {
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+        });
+        await NotificationService.showInfo(
+          title: '提示',
+          message: '${server.name} 服务已经停止',
+        );
+        return;
+      }
+
+      // 执行 net stop MongoDB
+      if (kDebugMode) {
+        print('[MongoDB停止] 执行 net stop MongoDB');
+      }
+      final result = await Process.run('net', [
+        'stop',
+        'MongoDB',
+      ], runInShell: true);
+
+      if (result.exitCode == 0) {
+        setState(() {
+          _serverRunningStatus[server.id] = false;
+        });
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '${server.name} 已停止',
+        );
+      } else {
+        final errorOutput = result.stderr.toString();
+        // 检查是否服务已经停止
+        final output = result.stdout.toString() + errorOutput;
+        if (output.toLowerCase().contains('not started') ||
+            output.toLowerCase().contains('尚未启动') ||
+            output.toLowerCase().contains('is not running') ||
+            output.toLowerCase().contains('not running')) {
+          setState(() {
+            _serverRunningStatus[server.id] = false;
+          });
+          await NotificationService.showInfo(
+            title: '提示',
+            message: '${server.name} 服务已经停止',
+          );
+        } else {
+          await NotificationService.showError(
+            title: '停止失败',
+            message: '停止 ${server.name} 失败: $errorOutput',
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[MongoDB停止失败] 发生异常: $e');
+      }
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止 ${server.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 重启MongoDB
+  Future<void> _restartMongodb(Software server) async {
+    // 先停止
+    await _stopMongodb(server);
+    // 等待一小段时间
+    await Future.delayed(const Duration(milliseconds: 500));
+    // 再启动
+    await _startMongodb(server);
   }
 
   /// 获取Redis目录
