@@ -25,7 +25,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   // 当前选中的页面
   String _currentPage = '控制台';
   // 顶栏的垂直偏移（用于在有AppBar的页面时下移）
@@ -38,16 +38,77 @@ class _HomePageState extends State<HomePage> {
       GlobalKey<NavigatorState>();
   // 已安装的工具列表
   List<Software> _installedTools = [];
+  // 使用 IndexedStack 保持页面状态
+  final Map<String, Widget> _pageCache = {};
+
+  // 获取当前页面的索引
+  int _getPageIndex() {
+    switch (_currentPage) {
+      case '控制台':
+        return 0;
+      case '软件管理':
+        return 1;
+      case '快捷工具':
+        return 2;
+      case '设置':
+        return 3;
+      default:
+        return 0;
+    }
+  }
+
+  // 获取所有页面
+  List<Widget> _getAllPages() {
+    if (_pageCache.isEmpty) {
+      _pageCache['控制台'] = ConsolePage(
+        key: ConsolePage.globalKey,
+        navigatorKey: _rightContainerNavigatorKey,
+      );
+      _pageCache['软件管理'] = const SoftwareManagementPage();
+      _pageCache['快捷工具'] = const QuickToolsPage();
+      _pageCache['设置'] = const SettingsPage();
+    }
+    return [
+      _pageCache['控制台']!,
+      _pageCache['软件管理']!,
+      _pageCache['快捷工具']!,
+      _pageCache['设置']!,
+    ];
+  }
 
   @override
   void initState() {
     super.initState();
+    // 注册生命周期观察者
+    WidgetsBinding.instance.addObserver(this);
     // 延迟初始化，确保 context 可用
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
       _checkRouteAndUpdateTitleBar();
       _loadInstalledTools();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // 应用关闭时停止所有服务
+    final consoleState = ConsolePage.globalKey.currentState;
+    if (consoleState != null) {
+      consoleState.stopAllServersOnClose();
+    }
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      // 应用即将关闭，停止所有服务
+      final consoleState = ConsolePage.globalKey.currentState;
+      if (consoleState != null) {
+        consoleState.stopAllServersOnClose();
+      }
+    }
   }
 
   /// 加载已安装的tools应用
@@ -397,21 +458,6 @@ class _HomePageState extends State<HomePage> {
     return await IconService.getIconPath(software);
   }
 
-  Widget _getCurrentPage() {
-    switch (_currentPage) {
-      case '控制台':
-        return ConsolePage(navigatorKey: _rightContainerNavigatorKey);
-      case '软件管理':
-        return const SoftwareManagementPage();
-      case '快捷工具':
-        return const QuickToolsPage();
-      case '设置':
-        return const SettingsPage();
-      default:
-        return ConsolePage(navigatorKey: _rightContainerNavigatorKey);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     // 每次build时检查路由变化并更新顶栏位置
@@ -556,13 +602,9 @@ class _HomePageState extends State<HomePage> {
                                 ),
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(16),
-                                  child: Navigator(
-                                    key: _rightContainerNavigatorKey,
-                                    onGenerateRoute: (settings) {
-                                      return MaterialPageRoute(
-                                        builder: (context) => _getCurrentPage(),
-                                      );
-                                    },
+                                  child: IndexedStack(
+                                    index: _getPageIndex(),
+                                    children: _getAllPages(),
                                   ),
                                 ),
                               ),

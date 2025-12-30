@@ -383,5 +383,43 @@ class NginxProjectHelper {
       // 不显示错误，静默处理
     }
   }
+
+  /// 检查 nginx 配置是否正确
+  /// 返回 (是否成功, 输出内容)
+  static Future<({bool success, String output})> checkNginxConfig(
+    String nginxDir,
+  ) async {
+    try {
+      final nginxExe = path.join(nginxDir, 'nginx.exe');
+      final nginxFile = File(nginxExe);
+      if (!await nginxFile.exists()) {
+        final errorMsg = '找不到nginx.exe文件: $nginxExe';
+        return (success: false, output: errorMsg);
+      }
+
+      // 执行 nginx -t 命令
+      final result = await Process.run(
+        nginxExe,
+        ['-t'],
+        runInShell: true,
+        workingDirectory: nginxDir,
+      );
+
+      // 获取输出（合并stdout和stderr）
+      final output = '${result.stdout}${result.stderr}';
+
+      // 检查输出是否以 "test is successful" 结尾（不区分大小写）
+      final normalizedOutput = output.trim().toLowerCase();
+      if (normalizedOutput.endsWith('test is successful')) {
+        return (success: true, output: output);
+      } else {
+        // 配置检查失败
+        return (success: false, output: output);
+      }
+    } catch (e) {
+      final errorMsg = '执行nginx配置检查时发生错误: $e';
+      return (success: false, output: errorMsg);
+    }
+  }
 }
 

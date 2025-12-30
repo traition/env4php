@@ -6,6 +6,7 @@ import '../services/config_service.dart';
 import '../services/download_service.dart';
 import '../services/extract_service.dart';
 import '../services/software_source_service.dart';
+import '../utils/nginx_project_helper.dart';
 
 /// 安装服务
 class InstallService {
@@ -313,6 +314,8 @@ class InstallService {
 
         // 检查是否被取消
         if (cancellationToken != null && cancellationToken()) {
+          // 删除下载文件
+          await _deleteFileWithRetry(downloadPath);
           return (false, '下载已取消', null);
         }
 
@@ -348,7 +351,8 @@ class InstallService {
             onProgress?.call('正在验证文件完整性...', 0.45, '警告: 哈希值不匹配！');
             // 哈希不匹配
             if (!userConfirmedHashMismatch) {
-              // 用户未确认，返回特殊状态
+              // 用户未确认，删除下载文件并返回特殊状态
+              await _deleteFileWithRetry(downloadPath);
               return (false, statusHashMismatch, calculatedHash);
             }
             // 用户已确认继续，继续安装流程
@@ -397,8 +401,11 @@ class InstallService {
         );
 
         if (!extractSuccess) {
-          // 清除下载文件痕迹（使用重试机制）
+          // 解压失败，删除下载文件和软件目录
           await _deleteFileWithRetry(downloadPath);
+          if (await softwareDir.exists()) {
+            await _deleteDirectoryWithRetry(softwareDir.path);
+          }
           return (false, errorExtractFailed, calculatedHash);
         }
 
@@ -420,14 +427,21 @@ class InstallService {
           );
 
           if (!commandResult.$1) {
-            // 命令执行失败
+            // 命令执行失败，删除下载文件和软件目录
             await _deleteFileWithRetry(downloadPath);
+            if (await softwareDir.exists()) {
+              await _deleteDirectoryWithRetry(softwareDir.path);
+            }
             return (false, commandResult.$2 ?? '命令执行失败', calculatedHash);
           }
 
           onProgress?.call('指令执行完成', 0.6, '所有安装指令已执行完成。');
         } catch (e) {
+          // 执行安装指令时发生错误，删除下载文件和软件目录
           await _deleteFileWithRetry(downloadPath);
+          if (await softwareDir.exists()) {
+            await _deleteDirectoryWithRetry(softwareDir.path);
+          }
           return (false, '执行安装指令时发生错误: $e', calculatedHash);
         }
       }
@@ -772,6 +786,33 @@ class InstallService {
         }
       }
 
+      // phpMyAdmin 特殊处理：创建普通PHP项目
+      if (software.cate4 != null &&
+          software.cate4!.toLowerCase() == 'phpmyadmin') {
+        onProgress?.call('正在初始化 phpMyAdmin...', 0.98, '开始创建 phpMyAdmin 项目...');
+        final phpmyadminInitResult = await _initializePhpmyadmin(
+          softwareDir.path,
+          onProgress: onProgress,
+        );
+        if (!phpmyadminInitResult.$1) {
+          // phpMyAdmin 初始化失败，删除下载文件和软件目录
+          await _deleteFileWithRetry(downloadPath);
+          if (await softwareDir.exists()) {
+            await _deleteDirectoryWithRetry(softwareDir.path);
+          }
+          if (softwareSourceDir != null && await softwareSourceDir.exists()) {
+            await _deleteDirectoryWithRetry(softwareSourceDir.path);
+          }
+          return (
+            false,
+            phpmyadminInitResult.$2 ?? 'phpMyAdmin 初始化失败',
+            calculatedHash,
+          );
+        } else {
+          onProgress?.call('phpMyAdmin 初始化完成', 0.99, 'phpMyAdmin 项目创建完成');
+        }
+      }
+
       onProgress?.call('安装完成', 1.0, '安装完成！');
       return (true, null, calculatedHash);
     } catch (e) {
@@ -830,6 +871,75 @@ class InstallService {
 
     final isWithin = _isPathWithinStorage(resolvedPath, storagePath);
     return (resolvedPath, isWithin);
+  }
+
+  /// 解析 replace 命令的参数，支持反引号（`）作为字符串定界符
+  /// [command] 完整的命令字符串
+  /// 返回 (filePath, needle, replace) 或 null 如果解析失败
+  static (String filePath, String needle, String replace)? _parseReplaceCommand(
+    String command,
+  ) {
+    // 移除命令名 "replace"
+    String remaining = command.substring('replace'.length).trim();
+    if (remaining.isEmpty) {
+      return null;
+    }
+
+    // 解析 filePath（第一个参数，不需要反引号）
+    int filePathEnd = remaining.indexOf(' ');
+    if (filePathEnd == -1) {
+      return null;
+    }
+    String filePath = remaining.substring(0, filePathEnd);
+    remaining = remaining.substring(filePathEnd).trim();
+
+    // 解析 needle（第二个参数，可能用反引号包裹）
+    String needle = '';
+    if (remaining.startsWith('`')) {
+      // 以反引号开头，找到匹配的结束反引号
+      int endIndex = remaining.indexOf('`', 1);
+      if (endIndex == -1) {
+        return null; // 没有找到匹配的结束反引号
+      }
+      needle = remaining.substring(1, endIndex);
+      remaining = remaining.substring(endIndex + 1).trim();
+    } else {
+      // 没有反引号，找到下一个空格或反引号
+      int spaceIndex = remaining.indexOf(' ');
+      int backtickIndex = remaining.indexOf('`');
+      int endIndex = -1;
+      if (spaceIndex != -1 && backtickIndex != -1) {
+        endIndex = spaceIndex < backtickIndex ? spaceIndex : backtickIndex;
+      } else if (spaceIndex != -1) {
+        endIndex = spaceIndex;
+      } else if (backtickIndex != -1) {
+        endIndex = backtickIndex;
+      } else {
+        // 没有找到分隔符，整个剩余部分都是 needle
+        needle = remaining;
+        remaining = '';
+      }
+      if (endIndex != -1) {
+        needle = remaining.substring(0, endIndex);
+        remaining = remaining.substring(endIndex).trim();
+      }
+    }
+
+    // 解析 replace（第三个参数，可能用反引号包裹）
+    String replace;
+    if (remaining.startsWith('`')) {
+      // 以反引号开头，找到匹配的结束反引号
+      int endIndex = remaining.indexOf('`', 1);
+      if (endIndex == -1) {
+        return null; // 没有找到匹配的结束反引号
+      }
+      replace = remaining.substring(1, endIndex);
+    } else {
+      // 没有反引号，使用剩余的所有内容
+      replace = remaining;
+    }
+
+    return (filePath, needle, replace);
   }
 
   /// 执行安装命令
@@ -1517,18 +1627,16 @@ class InstallService {
             // filepath 相对于软件安装路径（存储目录/子分类文件夹/软件目录/）
             // 如果 filepath 以 .down 开头，则相对于安装包的下载地址
             // 如果 filepath 以 .7ztemp 开头，则相对于解压缩的目录（.7ztemp）
-            if (parts.length < 4) {
+            // 支持反引号（`）作为 needle 和 replace 的定界符
+            final parsed = _parseReplaceCommand(command);
+            if (parsed == null) {
               await _rollbackAddedPaths(addedPaths, onProgress);
-              return (
-                false,
-                'replace 命令需要三个参数: filepath, needle, replace',
-                addedPaths,
-              );
+              return (false, 'replace 命令解析失败，请检查命令格式', addedPaths);
             }
 
-            String filePath = parts[1];
-            String needle = parts[2];
-            String replace = parts.sublist(3).join(' '); // 支持 replace 中包含空格
+            String filePath = parsed.$1;
+            String needle = parsed.$2;
+            String replace = parsed.$3;
 
             // 解析文件路径
             String resolvedFilePath;
@@ -2510,18 +2618,16 @@ class InstallService {
             // filepath 相对于软件安装路径（存储目录/子分类文件夹/软件目录/）
             // 如果 filepath 以 .down 开头，则相对于安装包的下载地址
             // 如果 filepath 以 .7ztemp 开头，则相对于解压缩的目录（.7ztemp）
-            if (parts.length < 4) {
+            // 支持反引号（`）作为 needle 和 replace 的定界符
+            final parsed = _parseReplaceCommand(command);
+            if (parsed == null) {
               await _rollbackAddedPaths(addedPaths, onProgress);
-              return (
-                false,
-                'replace 命令需要三个参数: filepath, needle, replace',
-                addedPaths,
-              );
+              return (false, 'replace 命令解析失败，请检查命令格式', addedPaths);
             }
 
-            String filePath = parts[1];
-            String needle = parts[2];
-            String replace = parts.sublist(3).join(' '); // 支持 replace 中包含空格
+            String filePath = parsed.$1;
+            String needle = parsed.$2;
+            String replace = parsed.$3;
 
             // 解析文件路径
             String resolvedFilePath;
@@ -3167,6 +3273,23 @@ class InstallService {
       await File(downloadPath).copy(sourceFile.path);
       await _deleteFileWithRetry(downloadPath);
 
+      // 步骤9: 修改 php.ini 文件
+      onProgress?.call('正在配置 php.ini...', 0.97, '正在修改 php.ini 配置...');
+      final phpIniResult = await _configurePhpIni(
+        softwareDir.path,
+        onProgress: onProgress,
+      );
+      if (!phpIniResult.$1) {
+        // php.ini 配置失败，但不影响安装成功（因为文件已安装）
+        onProgress?.call(
+          'php.ini 配置警告',
+          0.99,
+          '警告: ${phpIniResult.$2 ?? "php.ini 配置失败，但安装已完成"}',
+        );
+      } else {
+        onProgress?.call('php.ini 配置完成', 0.99, 'php.ini 配置完成');
+      }
+
       onProgress?.call('安装完成', 1.0, 'PHP 安装完成！');
       return (true, null, calculatedHash);
     } catch (e) {
@@ -3441,6 +3564,431 @@ class InstallService {
       return (true, null);
     } catch (e) {
       return (false, 'MongoDB 初始化失败: $e');
+    }
+  }
+
+  /// phpMyAdmin 初始化处理
+  /// [phpmyadminDir] phpMyAdmin 安装目录路径
+  /// [onProgress] 进度回调
+  /// 返回 (是否成功, 错误信息)
+  static Future<(bool success, String? error)> _initializePhpmyadmin(
+    String phpmyadminDir, {
+    Function(String step, double progress, String? logMessage)? onProgress,
+  }) async {
+    try {
+      // 步骤1: 检查是否安装了 PHP 和 nginx
+      onProgress?.call('正在检查依赖...', 0.98, '检查 PHP 和 nginx 是否已安装...');
+
+      final storagePath = await ConfigService.getStoragePath();
+      if (storagePath == null) {
+        return (false, '存储目录未设置');
+      }
+
+      final softwareSource = await SoftwareSourceService.getSource();
+      if (softwareSource == null) {
+        return (false, '无法获取软件源');
+      }
+
+      // 检查 nginx 是否安装
+      final nginx = softwareSource.servers.firstWhere(
+        (s) => s.cate4?.toLowerCase() == 'nginx',
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+
+      if (nginx.id.isEmpty) {
+        return (false, 'nginx 未安装，请先安装 nginx');
+      }
+
+      final nginxDir = Directory('$storagePath/servers/${nginx.id}');
+      if (!await nginxDir.exists()) {
+        return (false, 'nginx 未安装，请先安装 nginx');
+      }
+
+      // 检查 PHP 是否安装
+      final phpDir = Directory('$storagePath/php');
+      if (!await phpDir.exists()) {
+        return (false, 'PHP 未安装，请先安装 PHP');
+      }
+
+      bool hasPhp = false;
+      await for (final entity in phpDir.list()) {
+        if (entity is Directory) {
+          hasPhp = true;
+          break;
+        }
+      }
+
+      if (!hasPhp) {
+        return (false, 'PHP 未安装，请先安装 PHP');
+      }
+
+      // 步骤2: 检查是否已有同名项目
+      onProgress?.call('正在检查项目...', 0.985, '检查是否已有同名项目...');
+
+      final projectName = 'phpmyadmin';
+      final servsDir = Directory(path.join(nginxDir.path, 'servs'));
+      if (await servsDir.exists()) {
+        final projectConfFile = File(
+          path.join(servsDir.path, '$projectName.conf'),
+        );
+        if (await projectConfFile.exists()) {
+          return (false, '项目名称 "$projectName" 已存在');
+        }
+      }
+
+      // 步骤3: 获取默认 PHP 版本
+      onProgress?.call('正在获取 PHP 版本...', 0.99, '获取默认 PHP 版本...');
+
+      final phpBatPath = path.join(storagePath, 'bin', 'php.bat');
+      final phpBatFile = File(phpBatPath);
+      String? defaultPhpVersionId;
+
+      if (await phpBatFile.exists()) {
+        try {
+          final content = await phpBatFile.readAsString();
+          final lines = content.split('\n');
+          if (lines.length >= 2) {
+            final match = RegExp(r'"([^"]+)"').firstMatch(lines[1]);
+            if (match != null) {
+              final phpExePath = match.group(1);
+              if (phpExePath != null) {
+                final phpExeDir = path.dirname(phpExePath);
+                defaultPhpVersionId = path.basename(phpExeDir);
+              }
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('获取默认 PHP 版本失败: $e');
+          }
+        }
+      }
+
+      // 如果没有默认版本，尝试获取第一个已安装的 PHP 版本
+      if (defaultPhpVersionId == null) {
+        await for (final entity in phpDir.list()) {
+          if (entity is Directory) {
+            final phpId = path.basename(entity.path);
+            final php = softwareSource.php.firstWhere(
+              (s) => s.id == phpId,
+              orElse: () => Software(
+                id: '',
+                name: '',
+                byte: 0,
+                downloadURL: '',
+                commands: [],
+                attachments: [],
+              ),
+            );
+            if (php.id.isNotEmpty) {
+              defaultPhpVersionId = php.id;
+              break;
+            }
+          }
+        }
+      }
+
+      if (defaultPhpVersionId == null) {
+        return (false, '未找到可用的 PHP 版本');
+      }
+
+      // 步骤4: 创建普通 PHP 项目
+      onProgress?.call('正在创建项目...', 0.995, '创建 phpMyAdmin 项目...');
+
+      // 准备 nginx 项目环境
+      final env = await NginxProjectHelper.prepareNginxProjectEnvironment(
+        projectName,
+        nginxDir.path,
+      );
+      if (env == null) {
+        return (false, '准备 nginx 项目环境失败');
+      }
+
+      final lines = env.lines;
+
+      // 配置 nginx 项目参数
+      final nginxConfig = <String, dynamic>{
+        'port': '80',
+        'serverName': 'phpmyadmin.localhost',
+        'root': phpmyadminDir.replaceAll('\\', '/'),
+        'enableSsl': false,
+        'rewriteRule': null,
+      };
+
+      // 修改端口
+      NginxProjectHelper.updatePort(lines, nginxConfig['port'] as String);
+
+      // 处理 SSL（不启用）
+      final sslSuccess = await NginxProjectHelper.handleSslConfig(
+        lines,
+        nginxConfig,
+        projectName,
+        env.servsDir,
+        (certPath, keyPath) async => false, // 不生成证书
+      );
+      if (!sslSuccess) {
+        return (false, '处理 SSL 配置失败');
+      }
+
+      // 修改 server_name
+      NginxProjectHelper.updateServerName(
+        lines,
+        nginxConfig['serverName'] as String? ?? '',
+      );
+
+      // 修改 root 路径
+      NginxProjectHelper.updateRootPath(
+        lines,
+        nginxConfig['root'] as String? ?? '',
+      );
+
+      // 修改项目名称行
+      NginxProjectHelper.updateProjectNameLines(lines, projectName);
+
+      // 确保 PHP 配置文件存在
+      onProgress?.call('正在检查 PHP 配置...', 0.995, '检查 PHP nginx 配置文件...');
+      final phpConfigResult = await _ensurePhpConfigExists(
+        nginxDir.path,
+        defaultPhpVersionId,
+      );
+      if (!phpConfigResult.$1) {
+        return (false, phpConfigResult.$2 ?? 'PHP 配置文件检查失败');
+      }
+
+      // 修改 PHP include 行
+      NginxProjectHelper.updatePhpInclude(lines, defaultPhpVersionId);
+
+      // 创建 subconf 文件（无伪静态规则）
+      await NginxProjectHelper.createNormalPhpSubconf(
+        projectName,
+        null, // 无伪静态规则
+        nginxDir.path,
+        env.servsDir,
+      );
+
+      // 修改 include conf/preconf 行
+      NginxProjectHelper.updatePreconfInclude(lines, projectName);
+
+      // 添加数据库配置（不选择相关软件，传入空列表）
+      NginxProjectHelper.addDatabaseConfig(lines, []);
+
+      // 完成项目创建
+      final serverName = nginxConfig['serverName'] as String? ?? '';
+      final success = await NginxProjectHelper.finalizeProjectCreation(
+        nginxDir.path,
+        env.projectConfFile,
+        lines,
+        projectName,
+        serverName,
+        NginxProjectHelper.checkNginxConfig,
+        _showNginxConfigErrorDialog,
+        _isNginxRunning,
+        _reloadNginx,
+      );
+
+      if (!success) {
+        return (false, '创建项目失败');
+      }
+
+      return (true, null);
+    } catch (e) {
+      return (false, 'phpMyAdmin 初始化失败: $e');
+    }
+  }
+
+  /// 确保 PHP 配置文件存在（用于普通 PHP 项目）
+  /// [nginxDir] nginx 安装目录
+  /// [phpVersionId] PHP 版本 ID
+  /// 返回 (是否成功, 错误信息)
+  static Future<(bool success, String? error)> _ensurePhpConfigExists(
+    String nginxDir,
+    String phpVersionId,
+  ) async {
+    try {
+      final phpConfPath = path.join(
+        nginxDir,
+        'conf',
+        'php',
+        '$phpVersionId.conf',
+      );
+      final phpConfFile = File(phpConfPath);
+
+      if (!await phpConfFile.exists()) {
+        // 复制示例文件
+        final examplePath = path.join(
+          nginxDir,
+          'conf',
+          'php',
+          'php.conf.example',
+        );
+        final exampleFile = File(examplePath);
+
+        if (!await exampleFile.exists()) {
+          return (false, 'PHP 配置示例文件不存在: $examplePath');
+        }
+
+        final content = await exampleFile.readAsString();
+        // 替换 fastcgi_pass 行中的 #--# 为默认端口（普通 PHP 项目通常使用 9000）
+        final lines = content.split('\n');
+        for (int i = 0; i < lines.length; i++) {
+          if (lines[i].contains('fastcgi_pass') && lines[i].contains('#--#')) {
+            lines[i] = lines[i].replaceAll('#--#', '9000');
+            break;
+          }
+        }
+        await phpConfFile.writeAsString(lines.join('\n'));
+      }
+      // 如果文件已存在，不需要更新（普通 PHP 项目不需要动态端口）
+
+      return (true, null);
+    } catch (e) {
+      return (false, '确保 PHP 配置文件存在失败: $e');
+    }
+  }
+
+  /// 显示 nginx 配置错误对话框（用于 NginxProjectHelper）
+  static Future<void> _showNginxConfigErrorDialog(String output) async {
+    // 在安装服务中，我们只记录错误，不显示对话框
+    if (kDebugMode) {
+      print('nginx 配置检查失败: $output');
+    }
+  }
+
+  /// 检查 nginx 是否正在运行（用于 NginxProjectHelper）
+  static Future<bool> _isNginxRunning() async {
+    // 简化实现，总是返回 false（不自动重新加载）
+    return false;
+  }
+
+  /// 重新加载 nginx（用于 NginxProjectHelper）
+  static Future<void> _reloadNginx() async {
+    // 在安装服务中，不自动重新加载 nginx
+    if (kDebugMode) {
+      print('跳过 nginx 重新加载（安装过程中）');
+    }
+  }
+
+  /// 配置 php.ini 文件
+  /// [phpDir] PHP 安装目录路径
+  /// [onProgress] 进度回调
+  /// 返回 (是否成功, 错误信息)
+  static Future<(bool success, String? error)> _configurePhpIni(
+    String phpDir, {
+    Function(String step, double progress, String? logMessage)? onProgress,
+  }) async {
+    try {
+      // 查找 php.ini 文件（可能在根目录或根目录下的某个位置）
+      final phpIniPath = path.join(phpDir, 'php.ini');
+      final phpIniFile = File(phpIniPath);
+
+      if (!await phpIniFile.exists()) {
+        // 如果根目录下没有，尝试查找 php.ini-development 或 php.ini-production
+        final phpIniDev = File(path.join(phpDir, 'php.ini-development'));
+        final phpIniProd = File(path.join(phpDir, 'php.ini-production'));
+
+        if (await phpIniDev.exists()) {
+          // 复制 php.ini-development 为 php.ini
+          await phpIniDev.copy(phpIniPath);
+          onProgress?.call(
+            '正在配置 php.ini...',
+            0.97,
+            '从 php.ini-development 创建 php.ini',
+          );
+        } else if (await phpIniProd.exists()) {
+          // 复制 php.ini-production 为 php.ini
+          await phpIniProd.copy(phpIniPath);
+          onProgress?.call(
+            '正在配置 php.ini...',
+            0.97,
+            '从 php.ini-production 创建 php.ini',
+          );
+        } else {
+          return (false, '未找到 php.ini 文件或模板文件');
+        }
+      }
+
+      // 读取 php.ini 文件内容
+      final content = await phpIniFile.readAsString();
+      final lines = content.split('\n');
+
+      // 需要取消注释的扩展列表
+      final extensionsToEnable = [
+        'extension=bz2',
+        'extension=curl',
+        'extension=ffi',
+        'extension=fileinfo',
+        'extension=gettext',
+        'extension=intl',
+        'extension=mbstring',
+        'extension=gd',
+        'extension=exif',
+        'extension=mysqli',
+        'extension=openssl',
+        'extension=pdo_mysql',
+        'extension=pdo_pgsql',
+        'extension=pdo_sqlite',
+        'extension=pgsql',
+        'extension=sqlite3',
+        'zend_extension=opcache',
+      ];
+
+      // 修改每一行
+      for (int i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        final trimmedLine = line.trim();
+
+        if (trimmedLine.startsWith(';opcache.enable=1') ||
+            trimmedLine == ';opcache.enable=1') {
+          lines[i] = line.replaceFirst(';opcache.enable=1', 'opcache.enable=1');
+          onProgress?.call('正在配置 php.ini...', 0.97, '启用 opcache.enable');
+          continue;
+        }
+
+        if (trimmedLine.startsWith(';opcache.enable_cli=0') ||
+            trimmedLine == ';opcache.enable_cli=0') {
+          lines[i] = line.replaceFirst(
+            ';opcache.enable_cli=0',
+            'opcache.enable_cli=1',
+          );
+          onProgress?.call('正在配置 php.ini...', 0.97, '启用 opcache.enable_cli');
+          continue;
+        }
+
+        // 2. 修改 extension_dir
+        // 匹配 ;extension_dir = "ext" 或类似格式（可能有空格）
+        if ((RegExp(r'^\s*;extension_dir\s*=\s*"ext"').hasMatch(trimmedLine)) ||
+            (RegExp(r"^\s*;extension_dir\s*=\s*'ext'").hasMatch(trimmedLine))) {
+          lines[i] = line.replaceFirst(RegExp(r'^\s*;'), '');
+          onProgress?.call('正在配置 php.ini...', 0.97, '启用 extension_dir');
+          continue;
+        }
+
+        // 3. 取消注释指定的扩展
+        for (final extension in extensionsToEnable) {
+          // 匹配以分号开头，后跟扩展名的行（可能有空格）
+          final pattern = RegExp(r'^\s*;' + RegExp.escape(extension));
+          if (pattern.hasMatch(trimmedLine)) {
+            // 删除行首的分号（保留其他空格）
+            lines[i] = line.replaceFirst(RegExp(r'^\s*;'), '');
+            onProgress?.call('正在配置 php.ini...', 0.97, '启用 $extension');
+            break;
+          }
+        }
+      }
+
+      // 写回文件
+      await phpIniFile.writeAsString(lines.join('\n'));
+
+      return (true, null);
+    } catch (e) {
+      return (false, '配置 php.ini 失败: $e');
     }
   }
 }

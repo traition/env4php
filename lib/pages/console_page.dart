@@ -17,6 +17,8 @@ import 'nginx_config_page.dart';
 /// 控制台页面
 class ConsolePage extends StatefulWidget {
   final GlobalKey<NavigatorState>? navigatorKey;
+  static final GlobalKey<_ConsolePageState> globalKey =
+      GlobalKey<_ConsolePageState>();
 
   const ConsolePage({super.key, this.navigatorKey});
 
@@ -69,6 +71,7 @@ class _ConsolePageState extends State<ConsolePage> {
     super.initState();
     _loadInstalledServers();
     _loadProjects();
+    _loadServerRunningStatus();
   }
 
   @override
@@ -154,7 +157,7 @@ class _ConsolePageState extends State<ConsolePage> {
           installed.add(software);
           // 初始化运行状态为 false（未启动）
           if (!_serverRunningStatus.containsKey(software.id)) {
-            _serverRunningStatus[software.id] = false;
+            _setServerRunningStatus(software.id, false);
           }
         }
       }
@@ -169,7 +172,7 @@ class _ConsolePageState extends State<ConsolePage> {
           installed.add(software);
           // 初始化运行状态为 false（未启动）
           if (!_serverRunningStatus.containsKey(software.id)) {
-            _serverRunningStatus[software.id] = false;
+            _setServerRunningStatus(software.id, false);
           }
         }
       }
@@ -183,7 +186,7 @@ class _ConsolePageState extends State<ConsolePage> {
         _installedPhpIds.add(software.id); // 标记为PHP
         // 初始化运行状态为 false（未启动）
         if (!_serverRunningStatus.containsKey(software.id)) {
-          _serverRunningStatus[software.id] = false;
+          _setServerRunningStatus(software.id, false);
         }
       }
     }
@@ -193,7 +196,53 @@ class _ConsolePageState extends State<ConsolePage> {
         _installedServers = installed;
         _isLoadingServers = false;
       });
+      // 加载已保存的服务运行状态（在服务器列表加载完成后）
+      await _loadServerRunningStatus();
     }
+  }
+
+  /// 加载服务运行状态（从 SharedPreferences）
+  Future<void> _loadServerRunningStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // 从 SharedPreferences 加载所有已保存的状态
+      final allKeys = prefs.getKeys();
+      for (final key in allKeys) {
+        if (key.startsWith('server_running_status_')) {
+          final serverId = key.substring('server_running_status_'.length);
+          final isRunning = prefs.getBool(key);
+          if (isRunning != null) {
+            _serverRunningStatus[serverId] = isRunning;
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('加载服务运行状态失败: $e');
+      }
+    }
+  }
+
+  /// 保存服务运行状态（到 SharedPreferences）
+  Future<void> _saveServerRunningStatus(String serverId, bool isRunning) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('server_running_status_$serverId', isRunning);
+    } catch (e) {
+      if (kDebugMode) {
+        print('保存服务运行状态失败: $e');
+      }
+    }
+  }
+
+  /// 设置服务运行状态并保存（不触发 setState）
+  void _setServerRunningStatus(String serverId, bool isRunning) {
+    _serverRunningStatus[serverId] = isRunning;
+    // 异步保存，不阻塞
+    _saveServerRunningStatus(serverId, isRunning);
   }
 
   /// 全部启动服务器
@@ -287,6 +336,51 @@ class _ConsolePageState extends State<ConsolePage> {
       );
     } else {
       await NotificationService.showSuccess(title: '全部启动', message: message);
+    }
+  }
+
+  /// 全部停止服务器（应用关闭时调用，不显示通知）
+  Future<void> stopAllServersOnClose() async {
+    if (_installedServers.isEmpty) {
+      return;
+    }
+
+    final List<Future<void>> stopTasks = [];
+
+    // 筛选需要停止的服务器
+    for (final server in _installedServers) {
+      // 检查是否已实现停止逻辑
+      final isImplemented =
+          server.cate4?.toLowerCase() == 'nginx' ||
+          _installedPhpIds.contains(server.id) ||
+          server.cate4?.toLowerCase() == 'mysql' ||
+          server.cate4?.toLowerCase() == 'pgsql' ||
+          server.cate4?.toLowerCase() == 'mongodb' ||
+          server.cate4?.toLowerCase() == 'redis' ||
+          server.cate4?.toLowerCase() == 'rudis';
+
+      if (!isImplemented) {
+        continue;
+      }
+
+      // 检查是否已停止
+      if (_serverRunningStatus[server.id] != true) {
+        continue;
+      }
+
+      // 添加到停止任务列表（静默停止，不显示通知）
+      stopTasks.add(
+        _stopServerSilently(server).catchError((e) {
+          if (kDebugMode) {
+            print('[应用关闭] 停止 ${server.name} 时发生错误: $e');
+          }
+        }),
+      );
+    }
+
+    if (stopTasks.isNotEmpty) {
+      // 并行执行所有停止任务
+      await Future.wait(stopTasks);
     }
   }
 
@@ -442,7 +536,7 @@ class _ConsolePageState extends State<ConsolePage> {
         );
 
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
 
         await NotificationService.showSuccess(
@@ -470,7 +564,7 @@ class _ConsolePageState extends State<ConsolePage> {
       } else {
         // 其他服务器类型暂未实现
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
         await NotificationService.showInfo(
           title: '提示',
@@ -482,6 +576,68 @@ class _ConsolePageState extends State<ConsolePage> {
         title: '启动失败',
         message: '启动 ${server.name} 时发生错误: $e',
       );
+    }
+  }
+
+  /// 静默停止单个服务器（不显示通知，用于应用关闭时）
+  Future<void> _stopServerSilently(Software server) async {
+    try {
+      // 检查是否是nginx
+      if (server.cate4?.toLowerCase() == 'nginx') {
+        final nginxDir = await _getNginxDirectory();
+        if (nginxDir == null) return;
+
+        final nginxExe = path.join(nginxDir, 'nginx.exe');
+        final nginxFile = File(nginxExe);
+        if (!await nginxFile.exists()) return;
+
+        final result = await Process.run(
+          nginxExe,
+          ['-s', 'stop'],
+          runInShell: true,
+          workingDirectory: nginxDir,
+        );
+
+        if (result.exitCode == 0) {
+          _setServerRunningStatus(server.id, false);
+        }
+      } else if (_installedPhpIds.contains(server.id)) {
+        await _stopPhpSilently(server);
+      } else if (server.cate4?.toLowerCase() == 'mysql') {
+        final result = await Process.run('sc', [
+          'stop',
+          'mysql',
+        ], runInShell: true);
+        if (result.exitCode == 0 ||
+            result.stderr.toString().contains('1062') ||
+            result.stderr.toString().contains('服务尚未启动')) {
+          _setServerRunningStatus(server.id, false);
+        }
+      } else if (server.cate4?.toLowerCase() == 'pgsql') {
+        final result = await Process.run('net', [
+          'stop',
+          'PostgreSQL',
+        ], runInShell: true);
+        if (result.exitCode == 0) {
+          _setServerRunningStatus(server.id, false);
+        }
+      } else if (server.cate4?.toLowerCase() == 'mongodb') {
+        final result = await Process.run('net', [
+          'stop',
+          'MongoDB',
+        ], runInShell: true);
+        if (result.exitCode == 0) {
+          _setServerRunningStatus(server.id, false);
+        }
+      } else if (server.cate4?.toLowerCase() == 'redis') {
+        await _stopRedisSilently(server);
+      } else if (server.cate4?.toLowerCase() == 'rudis') {
+        await _stopRudisSilently(server);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[静默停止] 停止 ${server.name} 时发生错误: $e');
+      }
     }
   }
 
@@ -519,7 +675,7 @@ class _ConsolePageState extends State<ConsolePage> {
 
         if (result.exitCode == 0) {
           setState(() {
-            _serverRunningStatus[server.id] = false;
+            _setServerRunningStatus(server.id, false);
           });
           await NotificationService.showSuccess(
             title: '停止成功',
@@ -552,7 +708,7 @@ class _ConsolePageState extends State<ConsolePage> {
       } else {
         // 其他服务器类型暂未实现
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
         });
         await NotificationService.showInfo(
           title: '提示',
@@ -2640,45 +2796,35 @@ class _ConsolePageState extends State<ConsolePage> {
 
       if (await exampleFile.exists()) {
         final content = await exampleFile.readAsString();
-        // 替换第三行的#--#为端口
+        // 替换 fastcgi_pass 行中的 #--# 为端口
         final lines = content.split('\n');
-        if (lines.length >= 3) {
-          lines[2] = lines[2].replaceAll('#--#', port.toString());
+        for (int i = 0; i < lines.length; i++) {
+          if (lines[i].contains('fastcgi_pass') && lines[i].contains('#--#')) {
+            lines[i] = lines[i].replaceAll('#--#', port.toString());
+            break;
+          }
         }
         await phpConfFile.writeAsString(lines.join('\n'));
       }
     } else {
-      // 如果文件已存在，更新端口配置
+      // 如果文件已存在，更新 fastcgi_pass 行中的端口配置
       final content = await phpConfFile.readAsString();
       final lines = content.split('\n');
-      // 查找包含listen的行并更新端口
-      bool portUpdated = false;
+      // 查找包含 fastcgi_pass 的行并更新端口
       for (int i = 0; i < lines.length; i++) {
-        if (lines[i].contains('listen') && lines[i].contains('#')) {
-          // 如果包含#--#占位符，替换它
+        if (lines[i].contains('fastcgi_pass')) {
+          // 如果包含 #--# 占位符，替换它
           if (lines[i].contains('#--#')) {
             lines[i] = lines[i].replaceAll('#--#', port.toString());
-            portUpdated = true;
             break;
+          } else {
+            // 如果已有端口配置，更新它（匹配 127.0.0.1:端口 或 upstream 名称）
+            final portPattern = RegExp(r':(\d+)');
+            if (portPattern.hasMatch(lines[i])) {
+              lines[i] = lines[i].replaceAll(portPattern, ':$port');
+              break;
+            }
           }
-        } else if (RegExp(r'listen\s+\d+').hasMatch(lines[i])) {
-          // 如果已有端口配置，更新它
-          lines[i] = lines[i].replaceAll(
-            RegExp(r'listen\s+\d+'),
-            'listen $port',
-          );
-          portUpdated = true;
-          break;
-        }
-      }
-
-      // 如果没有找到listen行，在第三行添加（如果存在）
-      if (!portUpdated && lines.length >= 3) {
-        if (lines[2].contains('#--#')) {
-          lines[2] = lines[2].replaceAll('#--#', port.toString());
-        } else {
-          // 在第三行后插入listen配置
-          lines.insert(2, '    listen $port;');
         }
       }
 
@@ -2901,7 +3047,7 @@ class _ConsolePageState extends State<ConsolePage> {
         }
         // 启动成功
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
           _phpProcessIds[server.id] = processId;
         });
 
@@ -2961,6 +3107,51 @@ class _ConsolePageState extends State<ConsolePage> {
     }
   }
 
+  /// 静默停止PHP（不显示通知）
+  Future<void> _stopPhpSilently(Software server) async {
+    try {
+      int? processId = _phpProcessIds[server.id];
+
+      if (processId == null) {
+        final phpDir = await _getPhpDirectory(server.id);
+        if (phpDir != null) {
+          final spawnerExe = path.join(phpDir, 'php-cgi-spawner.exe');
+          final prefs = await SharedPreferences.getInstance();
+          final portKey = 'php_port_${server.id}';
+          final port = prefs.getInt(portKey);
+          if (port != null) {
+            final foundPid = await _getPortProcessId(port, spawnerExe);
+            if (foundPid != null && foundPid > 0) {
+              processId = foundPid;
+            }
+          }
+        }
+      }
+
+      if (processId == null) {
+        _setServerRunningStatus(server.id, false);
+        _phpProcessIds.remove(server.id);
+        return;
+      }
+
+      await Process.run('taskkill', [
+        '/F',
+        '/T',
+        '/PID',
+        processId.toString(),
+      ], runInShell: true);
+
+      _setServerRunningStatus(server.id, false);
+      _phpProcessIds.remove(server.id);
+    } catch (e) {
+      if (kDebugMode) {
+        print('[静默停止PHP] 发生异常: $e');
+      }
+      _setServerRunningStatus(server.id, false);
+      _phpProcessIds.remove(server.id);
+    }
+  }
+
   /// 停止PHP
   Future<void> _stopPhp(Software server) async {
     try {
@@ -2998,7 +3189,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (processId == null) {
         // 仍然找不到PID，可能进程已经停止
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _phpProcessIds.remove(server.id);
         });
         await NotificationService.showInfo(
@@ -3025,7 +3216,7 @@ class _ConsolePageState extends State<ConsolePage> {
           print('[PHP停止] 进程树已成功终止');
         }
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _phpProcessIds.remove(server.id);
         });
 
@@ -3039,7 +3230,7 @@ class _ConsolePageState extends State<ConsolePage> {
           print('[PHP停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
         }
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _phpProcessIds.remove(server.id);
         });
 
@@ -3190,7 +3381,7 @@ class _ConsolePageState extends State<ConsolePage> {
 
         if (retryStartResult.exitCode == 0) {
           setState(() {
-            _serverRunningStatus[server.id] = true;
+            _setServerRunningStatus(server.id, true);
           });
           await NotificationService.showSuccess(
             title: '启动成功',
@@ -3206,7 +3397,7 @@ class _ConsolePageState extends State<ConsolePage> {
       } else if (startResult.exitCode == 0) {
         // 启动成功
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
         await NotificationService.showSuccess(
           title: '启动成功',
@@ -3244,7 +3435,7 @@ class _ConsolePageState extends State<ConsolePage> {
 
       if (result.exitCode == 0) {
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
         });
         await NotificationService.showSuccess(
           title: '停止成功',
@@ -3259,7 +3450,7 @@ class _ConsolePageState extends State<ConsolePage> {
             errorOutput.contains('指定的服务未安装') ||
             errorOutput.toLowerCase().contains('not running')) {
           setState(() {
-            _serverRunningStatus[server.id] = false;
+            _setServerRunningStatus(server.id, false);
           });
           await NotificationService.showInfo(
             title: '提示',
@@ -3325,7 +3516,7 @@ class _ConsolePageState extends State<ConsolePage> {
       final isRunning = await _isPgsqlServiceRunning();
       if (isRunning) {
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
         await NotificationService.showInfo(
           title: '提示',
@@ -3346,7 +3537,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (result.exitCode == 0) {
         // 启动成功
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
         await NotificationService.showSuccess(
           title: '启动成功',
@@ -3360,7 +3551,7 @@ class _ConsolePageState extends State<ConsolePage> {
             output.toLowerCase().contains('已经启动') ||
             output.toLowerCase().contains('is already running')) {
           setState(() {
-            _serverRunningStatus[server.id] = true;
+            _setServerRunningStatus(server.id, true);
           });
           await NotificationService.showInfo(
             title: '提示',
@@ -3391,7 +3582,7 @@ class _ConsolePageState extends State<ConsolePage> {
       final isRunning = await _isPgsqlServiceRunning();
       if (!isRunning) {
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
         });
         await NotificationService.showInfo(
           title: '提示',
@@ -3411,7 +3602,7 @@ class _ConsolePageState extends State<ConsolePage> {
 
       if (result.exitCode == 0) {
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
         });
         await NotificationService.showSuccess(
           title: '停止成功',
@@ -3426,7 +3617,7 @@ class _ConsolePageState extends State<ConsolePage> {
             output.toLowerCase().contains('is not running') ||
             output.toLowerCase().contains('not running')) {
           setState(() {
-            _serverRunningStatus[server.id] = false;
+            _setServerRunningStatus(server.id, false);
           });
           await NotificationService.showInfo(
             title: '提示',
@@ -3492,7 +3683,7 @@ class _ConsolePageState extends State<ConsolePage> {
       final isRunning = await _isMongodbServiceRunning();
       if (isRunning) {
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
         await NotificationService.showInfo(
           title: '提示',
@@ -3513,7 +3704,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (result.exitCode == 0) {
         // 启动成功
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
         });
         await NotificationService.showSuccess(
           title: '启动成功',
@@ -3527,7 +3718,7 @@ class _ConsolePageState extends State<ConsolePage> {
             output.toLowerCase().contains('已经启动') ||
             output.toLowerCase().contains('is already running')) {
           setState(() {
-            _serverRunningStatus[server.id] = true;
+            _setServerRunningStatus(server.id, true);
           });
           await NotificationService.showInfo(
             title: '提示',
@@ -3558,7 +3749,7 @@ class _ConsolePageState extends State<ConsolePage> {
       final isRunning = await _isMongodbServiceRunning();
       if (!isRunning) {
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
         });
         await NotificationService.showInfo(
           title: '提示',
@@ -3578,7 +3769,7 @@ class _ConsolePageState extends State<ConsolePage> {
 
       if (result.exitCode == 0) {
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
         });
         await NotificationService.showSuccess(
           title: '停止成功',
@@ -3593,7 +3784,7 @@ class _ConsolePageState extends State<ConsolePage> {
             output.toLowerCase().contains('is not running') ||
             output.toLowerCase().contains('not running')) {
           setState(() {
-            _serverRunningStatus[server.id] = false;
+            _setServerRunningStatus(server.id, false);
           });
           await NotificationService.showInfo(
             title: '提示',
@@ -3749,7 +3940,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (startupSuccess) {
         // 启动成功
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
           _redisProcessIds[server.id] = pid;
         });
 
@@ -3780,7 +3971,7 @@ class _ConsolePageState extends State<ConsolePage> {
       } else {
         // 未检测到明确的成功或失败信号，暂存PID并提示用户
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
           _redisProcessIds[server.id] = pid;
         });
 
@@ -3798,6 +3989,60 @@ class _ConsolePageState extends State<ConsolePage> {
         title: '启动失败',
         message: '启动 ${server.name} 时发生错误: $e',
       );
+    }
+  }
+
+  /// 静默停止Redis（不显示通知）
+  Future<void> _stopRedisSilently(Software server) async {
+    try {
+      int? processId = _redisProcessIds[server.id];
+
+      if (processId == null) {
+        final result = await Process.run('tasklist', [
+          '/FI',
+          'IMAGENAME eq redis-server.exe',
+          '/FO',
+          'CSV',
+          '/NH',
+        ], runInShell: true);
+
+        final output = result.stdout.toString();
+        if (output.isNotEmpty && output.contains('redis-server.exe')) {
+          final lines = output.split('\n');
+          for (final line in lines) {
+            if (line.contains('redis-server.exe')) {
+              final parts = line.split(',');
+              if (parts.length >= 2) {
+                final pidStr = parts[1].replaceAll('"', '').trim();
+                processId = int.tryParse(pidStr);
+                if (processId != null) break;
+              }
+            }
+          }
+        }
+      }
+
+      if (processId == null) {
+        _setServerRunningStatus(server.id, false);
+        _redisProcessIds.remove(server.id);
+        return;
+      }
+
+      await Process.run('taskkill', [
+        '/F',
+        '/T',
+        '/PID',
+        processId.toString(),
+      ], runInShell: true);
+
+      _setServerRunningStatus(server.id, false);
+      _redisProcessIds.remove(server.id);
+    } catch (e) {
+      if (kDebugMode) {
+        print('[静默停止Redis] 发生异常: $e');
+      }
+      _setServerRunningStatus(server.id, false);
+      _redisProcessIds.remove(server.id);
     }
   }
 
@@ -3845,7 +4090,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (processId == null) {
         // 仍然找不到PID，可能进程已经停止
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _redisProcessIds.remove(server.id);
         });
         await NotificationService.showInfo(
@@ -3872,7 +4117,7 @@ class _ConsolePageState extends State<ConsolePage> {
           print('[Redis停止] 进程树已成功终止');
         }
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _redisProcessIds.remove(server.id);
         });
 
@@ -3886,7 +4131,7 @@ class _ConsolePageState extends State<ConsolePage> {
           print('[Redis停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
         }
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _redisProcessIds.remove(server.id);
         });
 
@@ -4043,7 +4288,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (startupSuccess) {
         // 启动成功
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
           _rudisProcessIds[server.id] = pid;
         });
 
@@ -4074,7 +4319,7 @@ class _ConsolePageState extends State<ConsolePage> {
       } else {
         // 未检测到明确的成功或失败信号，暂存PID并提示用户
         setState(() {
-          _serverRunningStatus[server.id] = true;
+          _setServerRunningStatus(server.id, true);
           _rudisProcessIds[server.id] = pid;
         });
 
@@ -4092,6 +4337,60 @@ class _ConsolePageState extends State<ConsolePage> {
         title: '启动失败',
         message: '启动 ${server.name} 时发生错误: $e',
       );
+    }
+  }
+
+  /// 静默停止Rudis（不显示通知）
+  Future<void> _stopRudisSilently(Software server) async {
+    try {
+      int? processId = _rudisProcessIds[server.id];
+
+      if (processId == null) {
+        final result = await Process.run('tasklist', [
+          '/FI',
+          'IMAGENAME eq rudis-server.exe',
+          '/FO',
+          'CSV',
+          '/NH',
+        ], runInShell: true);
+
+        final output = result.stdout.toString();
+        if (output.isNotEmpty && output.contains('rudis-server.exe')) {
+          final lines = output.split('\n');
+          for (final line in lines) {
+            if (line.contains('rudis-server.exe')) {
+              final parts = line.split(',');
+              if (parts.length >= 2) {
+                final pidStr = parts[1].replaceAll('"', '').trim();
+                processId = int.tryParse(pidStr);
+                if (processId != null) break;
+              }
+            }
+          }
+        }
+      }
+
+      if (processId == null) {
+        _setServerRunningStatus(server.id, false);
+        _rudisProcessIds.remove(server.id);
+        return;
+      }
+
+      await Process.run('taskkill', [
+        '/F',
+        '/T',
+        '/PID',
+        processId.toString(),
+      ], runInShell: true);
+
+      _setServerRunningStatus(server.id, false);
+      _rudisProcessIds.remove(server.id);
+    } catch (e) {
+      if (kDebugMode) {
+        print('[静默停止Rudis] 发生异常: $e');
+      }
+      _setServerRunningStatus(server.id, false);
+      _rudisProcessIds.remove(server.id);
     }
   }
 
@@ -4139,7 +4438,7 @@ class _ConsolePageState extends State<ConsolePage> {
       if (processId == null) {
         // 仍然找不到PID，可能进程已经停止
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _rudisProcessIds.remove(server.id);
         });
         await NotificationService.showInfo(
@@ -4166,7 +4465,7 @@ class _ConsolePageState extends State<ConsolePage> {
           print('[Rudis停止] 进程树已成功终止');
         }
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _rudisProcessIds.remove(server.id);
         });
 
@@ -4180,7 +4479,7 @@ class _ConsolePageState extends State<ConsolePage> {
           print('[Rudis停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
         }
         setState(() {
-          _serverRunningStatus[server.id] = false;
+          _setServerRunningStatus(server.id, false);
           _rudisProcessIds.remove(server.id);
         });
 
