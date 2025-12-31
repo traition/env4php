@@ -6,7 +6,8 @@ import '../services/config_service.dart';
 import '../services/download_service.dart';
 import '../services/extract_service.dart';
 import '../services/software_source_service.dart';
-import '../utils/nginx_project_helper.dart';
+import '../services/software_managers/software_manager_factory.dart';
+import '../services/software_managers/software_manager.dart';
 
 /// 安装服务
 class InstallService {
@@ -727,19 +728,22 @@ class InstallService {
       // MySQL 特殊处理：初始化数据库并清理注册表
       if (software.cate4 != null && software.cate4!.toLowerCase() == 'mysql') {
         onProgress?.call('正在初始化 MySQL...', 0.98, '开始初始化 MySQL 数据库...');
-        final mysqlInitResult = await _initializeMysql(
-          softwareDir.path,
-          onProgress: onProgress,
-        );
-        if (!mysqlInitResult.$1) {
-          // MySQL 初始化失败，但不影响安装成功（因为文件已安装）
-          onProgress?.call(
-            'MySQL 初始化警告',
-            0.99,
-            '警告: ${mysqlInitResult.$2 ?? "MySQL 初始化失败，但安装已完成"}',
+        final manager = SoftwareManagerFactory.getManager(software);
+        if (manager != null && manager is InitializableSoftwareManager) {
+          final mysqlInitResult = await manager.initialize(
+            softwareDir.path,
+            onProgress: onProgress,
           );
-        } else {
-          onProgress?.call('MySQL 初始化完成', 0.99, 'MySQL 数据库初始化完成');
+          if (!mysqlInitResult.$1) {
+            // MySQL 初始化失败，但不影响安装成功（因为文件已安装）
+            onProgress?.call(
+              'MySQL 初始化警告',
+              0.99,
+              '警告: ${mysqlInitResult.$2 ?? "MySQL 初始化失败，但安装已完成"}',
+            );
+          } else {
+            onProgress?.call('MySQL 初始化完成', 0.99, 'MySQL 数据库初始化完成');
+          }
         }
       }
 
@@ -750,19 +754,22 @@ class InstallService {
           0.98,
           '开始初始化 PostgreSQL 数据库...',
         );
-        final pgsqlInitResult = await _initializePgsql(
-          softwareDir.path,
-          onProgress: onProgress,
-        );
-        if (!pgsqlInitResult.$1) {
-          // PostgreSQL 初始化失败，但不影响安装成功（因为文件已安装）
-          onProgress?.call(
-            'PostgreSQL 初始化警告',
-            0.99,
-            '警告: ${pgsqlInitResult.$2 ?? "PostgreSQL 初始化失败，但安装已完成"}',
+        final manager = SoftwareManagerFactory.getManager(software);
+        if (manager != null && manager is InitializableSoftwareManager) {
+          final pgsqlInitResult = await manager.initialize(
+            softwareDir.path,
+            onProgress: onProgress,
           );
-        } else {
-          onProgress?.call('PostgreSQL 初始化完成', 0.99, 'PostgreSQL 数据库初始化完成');
+          if (!pgsqlInitResult.$1) {
+            // PostgreSQL 初始化失败，但不影响安装成功（因为文件已安装）
+            onProgress?.call(
+              'PostgreSQL 初始化警告',
+              0.99,
+              '警告: ${pgsqlInitResult.$2 ?? "PostgreSQL 初始化失败，但安装已完成"}',
+            );
+          } else {
+            onProgress?.call('PostgreSQL 初始化完成', 0.99, 'PostgreSQL 数据库初始化完成');
+          }
         }
       }
 
@@ -770,19 +777,22 @@ class InstallService {
       if (software.cate4 != null &&
           software.cate4!.toLowerCase() == 'mongodb') {
         onProgress?.call('正在初始化 MongoDB...', 0.98, '开始初始化 MongoDB 服务...');
-        final mongodbInitResult = await _initializeMongodb(
-          softwareDir.path,
-          onProgress: onProgress,
-        );
-        if (!mongodbInitResult.$1) {
-          // MongoDB 初始化失败，但不影响安装成功（因为文件已安装）
-          onProgress?.call(
-            'MongoDB 初始化警告',
-            0.99,
-            '警告: ${mongodbInitResult.$2 ?? "MongoDB 初始化失败，但安装已完成"}',
+        final manager = SoftwareManagerFactory.getManager(software);
+        if (manager != null && manager is InitializableSoftwareManager) {
+          final mongodbInitResult = await manager.initialize(
+            softwareDir.path,
+            onProgress: onProgress,
           );
-        } else {
-          onProgress?.call('MongoDB 初始化完成', 0.99, 'MongoDB 服务初始化完成');
+          if (!mongodbInitResult.$1) {
+            // MongoDB 初始化失败，但不影响安装成功（因为文件已安装）
+            onProgress?.call(
+              'MongoDB 初始化警告',
+              0.99,
+              '警告: ${mongodbInitResult.$2 ?? "MongoDB 初始化失败，但安装已完成"}',
+            );
+          } else {
+            onProgress?.call('MongoDB 初始化完成', 0.99, 'MongoDB 服务初始化完成');
+          }
         }
       }
 
@@ -790,7 +800,8 @@ class InstallService {
       if (software.cate4 != null &&
           software.cate4!.toLowerCase() == 'phpmyadmin') {
         onProgress?.call('正在初始化 phpMyAdmin...', 0.98, '开始创建 phpMyAdmin 项目...');
-        final phpmyadminInitResult = await _initializePhpmyadmin(
+        final phpmyadminManager = SoftwareManagerFactory.getPhpmyadminManager();
+        final phpmyadminInitResult = await phpmyadminManager.initialize(
           softwareDir.path,
           onProgress: onProgress,
         );
@@ -3304,574 +3315,6 @@ class InstallService {
         }
       }
       return (false, 'PHP 安装失败: $e', calculatedHash);
-    }
-  }
-
-  /// MySQL 初始化处理
-  /// [mysqlDir] MySQL 安装目录路径
-  /// [onProgress] 进度回调
-  /// 返回 (是否成功, 错误信息)
-  static Future<(bool success, String? error)> _initializeMysql(
-    String mysqlDir, {
-    Function(String step, double progress, String? logMessage)? onProgress,
-  }) async {
-    try {
-      // 步骤1: 执行 mysqld --initialize-insecure
-      onProgress?.call(
-        '正在初始化 MySQL...',
-        0.98,
-        '执行 mysqld --initialize-insecure...',
-      );
-      final mysqldExe = path.join(mysqlDir, 'bin', 'mysqld.exe');
-      final mysqldFile = File(mysqldExe);
-
-      if (!await mysqldFile.exists()) {
-        return (false, '未找到 mysqld.exe 文件: $mysqldExe');
-      }
-
-      final result = await Process.run(
-        mysqldExe,
-        ['--initialize-insecure'],
-        runInShell: true,
-        workingDirectory: mysqlDir,
-      );
-
-      if (result.exitCode != 0) {
-        final errorOutput = result.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call('MySQL 初始化警告', 0.98, 'mysqld 初始化输出: $errorOutput');
-        }
-        // 即使退出码非0，也继续执行后续步骤（某些情况下可能已经初始化成功）
-      } else {
-        onProgress?.call('MySQL 初始化', 0.98, 'mysqld 初始化完成');
-      }
-
-      // 步骤1.5: 执行 mysqld -install
-      onProgress?.call('正在安装 MySQL 服务...', 0.982, '执行 mysqld install...');
-      final installResult = await Process.run(
-        mysqldExe,
-        ['--install-manual'],
-        runInShell: true,
-        workingDirectory: mysqlDir,
-      );
-
-      if (installResult.exitCode != 0) {
-        final errorOutput = installResult.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call(
-            'MySQL 服务安装警告',
-            0.982,
-            'mysqld -install 输出: $errorOutput',
-          );
-        }
-        // 即使退出码非0，也继续执行后续步骤（服务可能已经安装）
-      } else {
-        onProgress?.call('MySQL 服务安装', 0.982, 'mysqld 服务安装完成');
-      }
-
-      return (true, null);
-    } catch (e) {
-      return (false, 'MySQL 初始化失败: $e');
-    }
-  }
-
-  /// PostgreSQL 初始化处理
-  /// [pgsqlDir] PostgreSQL 安装目录路径
-  /// [onProgress] 进度回调
-  /// 返回 (是否成功, 错误信息)
-  static Future<(bool success, String? error)> _initializePgsql(
-    String pgsqlDir, {
-    Function(String step, double progress, String? logMessage)? onProgress,
-  }) async {
-    try {
-      // 步骤1: 执行 initdb.exe -D "pgsql目录\data" -E UTF-8 -U postgres
-      onProgress?.call('正在初始化 PostgreSQL...', 0.98, '执行 initdb.exe 初始化数据库...');
-      final initdbExe = path.join(pgsqlDir, 'bin', 'initdb.exe');
-      final initdbFile = File(initdbExe);
-
-      if (!await initdbFile.exists()) {
-        return (false, '未找到 initdb.exe 文件: $initdbExe');
-      }
-
-      final dataDir = path.join(pgsqlDir, 'data');
-      final initdbResult = await Process.run(
-        initdbExe,
-        ['-D', dataDir, '-E', 'UTF-8', '-U', 'postgres'],
-        runInShell: true,
-        workingDirectory: pgsqlDir,
-      );
-
-      if (initdbResult.exitCode != 0) {
-        final errorOutput = initdbResult.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call(
-            'PostgreSQL 初始化警告',
-            0.98,
-            'initdb 初始化输出: $errorOutput',
-          );
-        }
-        // 即使退出码非0，也继续执行后续步骤（某些情况下可能已经初始化成功）
-      } else {
-        onProgress?.call('PostgreSQL 初始化', 0.98, 'initdb 初始化完成');
-      }
-
-      // 步骤2: 执行 pg_ctl.exe register -D "pgsql目录\data" -N PostgreSQL
-      onProgress?.call(
-        '正在注册 PostgreSQL 服务...',
-        0.985,
-        '执行 pg_ctl.exe register...',
-      );
-      final pgCtlExe = path.join(pgsqlDir, 'bin', 'pg_ctl.exe');
-      final pgCtlFile = File(pgCtlExe);
-
-      if (!await pgCtlFile.exists()) {
-        return (false, '未找到 pg_ctl.exe 文件: $pgCtlExe');
-      }
-
-      final registerResult = await Process.run(
-        pgCtlExe,
-        ['register', '-D', dataDir, '-N', 'PostgreSQL'],
-        runInShell: true,
-        workingDirectory: pgsqlDir,
-      );
-
-      if (registerResult.exitCode != 0) {
-        final errorOutput = registerResult.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call(
-            'PostgreSQL 服务注册警告',
-            0.985,
-            'pg_ctl register 输出: $errorOutput',
-          );
-        }
-        // 即使退出码非0，也继续执行后续步骤（服务可能已经注册）
-      } else {
-        onProgress?.call('PostgreSQL 服务注册', 0.985, 'pg_ctl register 完成');
-      }
-
-      // 步骤3: 执行 sc config PostgreSQL start= demand
-      onProgress?.call(
-        '正在配置 PostgreSQL 服务...',
-        0.99,
-        '执行 sc config PostgreSQL start= demand...',
-      );
-      final configResult = await Process.run('sc', [
-        'config',
-        'PostgreSQL',
-        'start=',
-        'demand',
-      ], runInShell: true);
-
-      if (configResult.exitCode != 0) {
-        final errorOutput = configResult.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call(
-            'PostgreSQL 服务配置警告',
-            0.99,
-            'sc config 输出: $errorOutput',
-          );
-        }
-        // 即使退出码非0，也继续（服务可能已经配置）
-      } else {
-        onProgress?.call('PostgreSQL 服务配置', 0.99, 'sc config 完成');
-      }
-
-      return (true, null);
-    } catch (e) {
-      return (false, 'PostgreSQL 初始化失败: $e');
-    }
-  }
-
-  /// MongoDB 初始化处理
-  /// [mongodbDir] MongoDB 安装目录路径
-  /// [onProgress] 进度回调
-  /// 返回 (是否成功, 错误信息)
-  static Future<(bool success, String? error)> _initializeMongodb(
-    String mongodbDir, {
-    Function(String step, double progress, String? logMessage)? onProgress,
-  }) async {
-    try {
-      // 步骤1: 执行 mongod --config "mongodb目录\mongod.cfg" --install --serviceName "MongoDB"
-      onProgress?.call('正在注册 MongoDB 服务...', 0.98, '执行 mongod --install...');
-      // 先检查根目录，如果不存在再检查 bin 目录
-      String mongodExe = path.join(mongodbDir, 'mongod.exe');
-      File mongodFile = File(mongodExe);
-
-      if (!await mongodFile.exists()) {
-        // 如果根目录不存在，检查 bin 目录
-        mongodExe = path.join(mongodbDir, 'bin', 'mongod.exe');
-        mongodFile = File(mongodExe);
-        if (!await mongodFile.exists()) {
-          return (false, '未找到 mongod.exe 文件（已检查根目录和 bin 目录）');
-        }
-      }
-
-      final mongodCfg = path.join(mongodbDir, 'mongod.cfg');
-      final mongodCfgFile = File(mongodCfg);
-
-      if (!await mongodCfgFile.exists()) {
-        return (false, '未找到 mongod.cfg 文件: $mongodCfg');
-      }
-
-      final installResult = await Process.run(
-        mongodExe,
-        ['--config', mongodCfg, '--install', '--serviceName', 'MongoDB'],
-        runInShell: true,
-        workingDirectory: mongodbDir,
-      );
-
-      if (installResult.exitCode != 0) {
-        final errorOutput = installResult.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call(
-            'MongoDB 服务注册警告',
-            0.98,
-            'mongod --install 输出: $errorOutput',
-          );
-        }
-        // 即使退出码非0，也继续执行后续步骤（服务可能已经注册）
-      } else {
-        onProgress?.call('MongoDB 服务注册', 0.98, 'mongod --install 完成');
-      }
-
-      // 步骤2: 执行 sc config MongoDB start= demand
-      onProgress?.call(
-        '正在配置 MongoDB 服务...',
-        0.99,
-        '执行 sc config MongoDB start= demand...',
-      );
-      final configResult = await Process.run('sc', [
-        'config',
-        'MongoDB',
-        'start=',
-        'demand',
-      ], runInShell: true);
-
-      if (configResult.exitCode != 0) {
-        final errorOutput = configResult.stderr.toString();
-        if (errorOutput.isNotEmpty) {
-          onProgress?.call(
-            'MongoDB 服务配置警告',
-            0.99,
-            'sc config 输出: $errorOutput',
-          );
-        }
-        // 即使退出码非0，也继续（服务可能已经配置）
-      } else {
-        onProgress?.call('MongoDB 服务配置', 0.99, 'sc config 完成');
-      }
-
-      return (true, null);
-    } catch (e) {
-      return (false, 'MongoDB 初始化失败: $e');
-    }
-  }
-
-  /// phpMyAdmin 初始化处理
-  /// [phpmyadminDir] phpMyAdmin 安装目录路径
-  /// [onProgress] 进度回调
-  /// 返回 (是否成功, 错误信息)
-  static Future<(bool success, String? error)> _initializePhpmyadmin(
-    String phpmyadminDir, {
-    Function(String step, double progress, String? logMessage)? onProgress,
-  }) async {
-    try {
-      // 步骤1: 检查是否安装了 PHP 和 nginx
-      onProgress?.call('正在检查依赖...', 0.98, '检查 PHP 和 nginx 是否已安装...');
-
-      final storagePath = await ConfigService.getStoragePath();
-      if (storagePath == null) {
-        return (false, '存储目录未设置');
-      }
-
-      final softwareSource = await SoftwareSourceService.getSource();
-      if (softwareSource == null) {
-        return (false, '无法获取软件源');
-      }
-
-      // 检查 nginx 是否安装
-      final nginx = softwareSource.servers.firstWhere(
-        (s) => s.cate4?.toLowerCase() == 'nginx',
-        orElse: () => Software(
-          id: '',
-          name: '',
-          byte: 0,
-          downloadURL: '',
-          commands: [],
-          attachments: [],
-        ),
-      );
-
-      if (nginx.id.isEmpty) {
-        return (false, 'nginx 未安装，请先安装 nginx');
-      }
-
-      final nginxDir = Directory('$storagePath/servers/${nginx.id}');
-      if (!await nginxDir.exists()) {
-        return (false, 'nginx 未安装，请先安装 nginx');
-      }
-
-      // 检查 PHP 是否安装
-      final phpDir = Directory('$storagePath/php');
-      if (!await phpDir.exists()) {
-        return (false, 'PHP 未安装，请先安装 PHP');
-      }
-
-      bool hasPhp = false;
-      await for (final entity in phpDir.list()) {
-        if (entity is Directory) {
-          hasPhp = true;
-          break;
-        }
-      }
-
-      if (!hasPhp) {
-        return (false, 'PHP 未安装，请先安装 PHP');
-      }
-
-      // 步骤2: 检查是否已有同名项目
-      onProgress?.call('正在检查项目...', 0.985, '检查是否已有同名项目...');
-
-      final projectName = 'phpmyadmin';
-      final servsDir = Directory(path.join(nginxDir.path, 'servs'));
-      if (await servsDir.exists()) {
-        final projectConfFile = File(
-          path.join(servsDir.path, '$projectName.conf'),
-        );
-        if (await projectConfFile.exists()) {
-          return (false, '项目名称 "$projectName" 已存在');
-        }
-      }
-
-      // 步骤3: 获取默认 PHP 版本
-      onProgress?.call('正在获取 PHP 版本...', 0.99, '获取默认 PHP 版本...');
-
-      final phpBatPath = path.join(storagePath, 'bin', 'php.bat');
-      final phpBatFile = File(phpBatPath);
-      String? defaultPhpVersionId;
-
-      if (await phpBatFile.exists()) {
-        try {
-          final content = await phpBatFile.readAsString();
-          final lines = content.split('\n');
-          if (lines.length >= 2) {
-            final match = RegExp(r'"([^"]+)"').firstMatch(lines[1]);
-            if (match != null) {
-              final phpExePath = match.group(1);
-              if (phpExePath != null) {
-                final phpExeDir = path.dirname(phpExePath);
-                defaultPhpVersionId = path.basename(phpExeDir);
-              }
-            }
-          }
-        } catch (e) {
-          if (kDebugMode) {
-            print('获取默认 PHP 版本失败: $e');
-          }
-        }
-      }
-
-      // 如果没有默认版本，尝试获取第一个已安装的 PHP 版本
-      if (defaultPhpVersionId == null) {
-        await for (final entity in phpDir.list()) {
-          if (entity is Directory) {
-            final phpId = path.basename(entity.path);
-            final php = softwareSource.php.firstWhere(
-              (s) => s.id == phpId,
-              orElse: () => Software(
-                id: '',
-                name: '',
-                byte: 0,
-                downloadURL: '',
-                commands: [],
-                attachments: [],
-              ),
-            );
-            if (php.id.isNotEmpty) {
-              defaultPhpVersionId = php.id;
-              break;
-            }
-          }
-        }
-      }
-
-      if (defaultPhpVersionId == null) {
-        return (false, '未找到可用的 PHP 版本');
-      }
-
-      // 步骤4: 创建普通 PHP 项目
-      onProgress?.call('正在创建项目...', 0.995, '创建 phpMyAdmin 项目...');
-
-      // 准备 nginx 项目环境
-      final env = await NginxProjectHelper.prepareNginxProjectEnvironment(
-        projectName,
-        nginxDir.path,
-      );
-      if (env == null) {
-        return (false, '准备 nginx 项目环境失败');
-      }
-
-      final lines = env.lines;
-
-      // 配置 nginx 项目参数
-      final nginxConfig = <String, dynamic>{
-        'port': '80',
-        'serverName': 'phpmyadmin.localhost',
-        'root': phpmyadminDir.replaceAll('\\', '/'),
-        'enableSsl': false,
-        'rewriteRule': null,
-      };
-
-      // 修改端口
-      NginxProjectHelper.updatePort(lines, nginxConfig['port'] as String);
-
-      // 处理 SSL（不启用）
-      final sslSuccess = await NginxProjectHelper.handleSslConfig(
-        lines,
-        nginxConfig,
-        projectName,
-        env.servsDir,
-        (certPath, keyPath) async => false, // 不生成证书
-      );
-      if (!sslSuccess) {
-        return (false, '处理 SSL 配置失败');
-      }
-
-      // 修改 server_name
-      NginxProjectHelper.updateServerName(
-        lines,
-        nginxConfig['serverName'] as String? ?? '',
-      );
-
-      // 修改 root 路径
-      NginxProjectHelper.updateRootPath(
-        lines,
-        nginxConfig['root'] as String? ?? '',
-      );
-
-      // 修改项目名称行
-      NginxProjectHelper.updateProjectNameLines(lines, projectName);
-
-      // 确保 PHP 配置文件存在
-      onProgress?.call('正在检查 PHP 配置...', 0.995, '检查 PHP nginx 配置文件...');
-      final phpConfigResult = await _ensurePhpConfigExists(
-        nginxDir.path,
-        defaultPhpVersionId,
-      );
-      if (!phpConfigResult.$1) {
-        return (false, phpConfigResult.$2 ?? 'PHP 配置文件检查失败');
-      }
-
-      // 修改 PHP include 行
-      NginxProjectHelper.updatePhpInclude(lines, defaultPhpVersionId);
-
-      // 创建 subconf 文件（无伪静态规则）
-      await NginxProjectHelper.createNormalPhpSubconf(
-        projectName,
-        null, // 无伪静态规则
-        nginxDir.path,
-        env.servsDir,
-      );
-
-      // 修改 include conf/preconf 行
-      NginxProjectHelper.updatePreconfInclude(lines, projectName);
-
-      // 添加数据库配置（不选择相关软件，传入空列表）
-      NginxProjectHelper.addDatabaseConfig(lines, []);
-
-      // 完成项目创建
-      final serverName = nginxConfig['serverName'] as String? ?? '';
-      final success = await NginxProjectHelper.finalizeProjectCreation(
-        nginxDir.path,
-        env.projectConfFile,
-        lines,
-        projectName,
-        serverName,
-        NginxProjectHelper.checkNginxConfig,
-        _showNginxConfigErrorDialog,
-        _isNginxRunning,
-        _reloadNginx,
-      );
-
-      if (!success) {
-        return (false, '创建项目失败');
-      }
-
-      return (true, null);
-    } catch (e) {
-      return (false, 'phpMyAdmin 初始化失败: $e');
-    }
-  }
-
-  /// 确保 PHP 配置文件存在（用于普通 PHP 项目）
-  /// [nginxDir] nginx 安装目录
-  /// [phpVersionId] PHP 版本 ID
-  /// 返回 (是否成功, 错误信息)
-  static Future<(bool success, String? error)> _ensurePhpConfigExists(
-    String nginxDir,
-    String phpVersionId,
-  ) async {
-    try {
-      final phpConfPath = path.join(
-        nginxDir,
-        'conf',
-        'php',
-        '$phpVersionId.conf',
-      );
-      final phpConfFile = File(phpConfPath);
-
-      if (!await phpConfFile.exists()) {
-        // 复制示例文件
-        final examplePath = path.join(
-          nginxDir,
-          'conf',
-          'php',
-          'php.conf.example',
-        );
-        final exampleFile = File(examplePath);
-
-        if (!await exampleFile.exists()) {
-          return (false, 'PHP 配置示例文件不存在: $examplePath');
-        }
-
-        final content = await exampleFile.readAsString();
-        // 替换 fastcgi_pass 行中的 #--# 为默认端口（普通 PHP 项目通常使用 9000）
-        final lines = content.split('\n');
-        for (int i = 0; i < lines.length; i++) {
-          if (lines[i].contains('fastcgi_pass') && lines[i].contains('#--#')) {
-            lines[i] = lines[i].replaceAll('#--#', '9000');
-            break;
-          }
-        }
-        await phpConfFile.writeAsString(lines.join('\n'));
-      }
-      // 如果文件已存在，不需要更新（普通 PHP 项目不需要动态端口）
-
-      return (true, null);
-    } catch (e) {
-      return (false, '确保 PHP 配置文件存在失败: $e');
-    }
-  }
-
-  /// 显示 nginx 配置错误对话框（用于 NginxProjectHelper）
-  static Future<void> _showNginxConfigErrorDialog(String output) async {
-    // 在安装服务中，我们只记录错误，不显示对话框
-    if (kDebugMode) {
-      print('nginx 配置检查失败: $output');
-    }
-  }
-
-  /// 检查 nginx 是否正在运行（用于 NginxProjectHelper）
-  static Future<bool> _isNginxRunning() async {
-    // 简化实现，总是返回 false（不自动重新加载）
-    return false;
-  }
-
-  /// 重新加载 nginx（用于 NginxProjectHelper）
-  static Future<void> _reloadNginx() async {
-    // 在安装服务中，不自动重新加载 nginx
-    if (kDebugMode) {
-      print('跳过 nginx 重新加载（安装过程中）');
     }
   }
 

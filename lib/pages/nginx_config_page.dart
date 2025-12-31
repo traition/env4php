@@ -203,7 +203,7 @@ class _NginxConfigPageState extends State<NginxConfigPage> {
           margin: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            color: Theme.of(context).colorScheme.surface.withOpacity(0.8),
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.8),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),

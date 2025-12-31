@@ -12,6 +12,11 @@ import '../services/icon_service.dart';
 import '../models/software_model.dart';
 import '../utils/software_menu_helper.dart';
 import '../utils/nginx_project_helper.dart';
+import '../services/software_managers/software_manager.dart';
+import '../services/software_managers/software_manager_factory.dart';
+import '../services/software_managers/php_manager.dart';
+import '../services/software_managers/redis_manager.dart';
+import '../services/software_managers/rudis_manager.dart';
 import 'nginx_config_page.dart';
 
 /// 控制台页面
@@ -257,17 +262,12 @@ class _ConsolePageState extends State<ConsolePage> {
 
     // 筛选需要启动的服务器
     for (final server in _installedServers) {
-      // 检查是否已实现启动逻辑
-      final isImplemented =
-          server.cate4?.toLowerCase() == 'nginx' ||
+      // 检查是否已实现启动逻辑（使用管理器工厂判断）
+      final hasManager =
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql' ||
-          server.cate4?.toLowerCase() == 'pgsql' ||
-          server.cate4?.toLowerCase() == 'mongodb' ||
-          server.cate4?.toLowerCase() == 'redis' ||
-          server.cate4?.toLowerCase() == 'rudis';
+          SoftwareManagerFactory.hasManager(server);
 
-      if (!isImplemented) {
+      if (!hasManager) {
         // 未实现的服务器类型，跳过
         skipCount++;
         if (kDebugMode) {
@@ -306,18 +306,13 @@ class _ConsolePageState extends State<ConsolePage> {
     int successCount = 0;
     int failCount = 0;
     for (final server in _installedServers) {
-      final isImplemented =
-          server.cate4?.toLowerCase() == 'nginx' ||
+      final hasManager =
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql' ||
-          server.cate4?.toLowerCase() == 'pgsql' ||
-          server.cate4?.toLowerCase() == 'mongodb' ||
-          server.cate4?.toLowerCase() == 'redis' ||
-          server.cate4?.toLowerCase() == 'rudis';
+          SoftwareManagerFactory.hasManager(server);
 
-      if (isImplemented && _serverRunningStatus[server.id] == true) {
+      if (hasManager && _serverRunningStatus[server.id] == true) {
         successCount++;
-      } else if (isImplemented) {
+      } else if (hasManager) {
         failCount++;
       }
     }
@@ -349,17 +344,12 @@ class _ConsolePageState extends State<ConsolePage> {
 
     // 筛选需要停止的服务器
     for (final server in _installedServers) {
-      // 检查是否已实现停止逻辑
-      final isImplemented =
-          server.cate4?.toLowerCase() == 'nginx' ||
+      // 检查是否已实现停止逻辑（使用管理器工厂判断）
+      final hasManager =
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql' ||
-          server.cate4?.toLowerCase() == 'pgsql' ||
-          server.cate4?.toLowerCase() == 'mongodb' ||
-          server.cate4?.toLowerCase() == 'redis' ||
-          server.cate4?.toLowerCase() == 'rudis';
+          SoftwareManagerFactory.hasManager(server);
 
-      if (!isImplemented) {
+      if (!hasManager) {
         continue;
       }
 
@@ -396,17 +386,12 @@ class _ConsolePageState extends State<ConsolePage> {
 
     // 筛选需要停止的服务器
     for (final server in _installedServers) {
-      // 检查是否已实现停止逻辑
-      final isImplemented =
-          server.cate4?.toLowerCase() == 'nginx' ||
+      // 检查是否已实现停止逻辑（使用管理器工厂判断）
+      final hasManager =
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql' ||
-          server.cate4?.toLowerCase() == 'pgsql' ||
-          server.cate4?.toLowerCase() == 'mongodb' ||
-          server.cate4?.toLowerCase() == 'redis' ||
-          server.cate4?.toLowerCase() == 'rudis';
+          SoftwareManagerFactory.hasManager(server);
 
-      if (!isImplemented) {
+      if (!hasManager) {
         // 未实现的服务器类型，跳过
         skipCount++;
         if (kDebugMode) {
@@ -445,18 +430,13 @@ class _ConsolePageState extends State<ConsolePage> {
     int successCount = 0;
     int failCount = 0;
     for (final server in _installedServers) {
-      final isImplemented =
-          server.cate4?.toLowerCase() == 'nginx' ||
+      final hasManager =
           _installedPhpIds.contains(server.id) ||
-          server.cate4?.toLowerCase() == 'mysql' ||
-          server.cate4?.toLowerCase() == 'pgsql' ||
-          server.cate4?.toLowerCase() == 'mongodb' ||
-          server.cate4?.toLowerCase() == 'redis' ||
-          server.cate4?.toLowerCase() == 'rudis';
+          SoftwareManagerFactory.hasManager(server);
 
-      if (isImplemented && _serverRunningStatus[server.id] != true) {
+      if (hasManager && _serverRunningStatus[server.id] != true) {
         successCount++;
-      } else if (isImplemented && _serverRunningStatus[server.id] == true) {
+      } else if (hasManager && _serverRunningStatus[server.id] == true) {
         failCount++;
       }
     }
@@ -481,87 +461,27 @@ class _ConsolePageState extends State<ConsolePage> {
   /// 启动单个服务器
   Future<void> _startServer(Software server) async {
     try {
-      // 检查是否是nginx
-      if (server.cate4?.toLowerCase() == 'nginx') {
-        final nginxDir = await _getNginxDirectory();
-        if (nginxDir == null) {
-          await NotificationService.showError(
-            title: '启动失败',
-            message: 'nginx未安装',
-          );
-          return;
-        }
+      SoftwareManager? manager;
 
-        final nginxExe = path.join(nginxDir, 'nginx.exe');
-        final nginxFile = File(nginxExe);
-        if (!await nginxFile.exists()) {
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '找不到nginx.exe文件: $nginxExe',
-          );
-          return;
-        }
-
-        // 启动前先执行停止命令，确保没有残留进程
-        try {
-          await Process.run(
-            nginxExe,
-            ['-s', 'stop'],
-            runInShell: true,
-            workingDirectory: nginxDir,
-          );
-          // 等待一小段时间，确保进程完全停止
-          await Future.delayed(const Duration(milliseconds: 500));
-        } catch (e) {
-          // 如果停止失败（可能nginx未运行），继续执行启动
-          if (kDebugMode) {
-            print('停止nginx时发生错误（可能nginx未运行）: $e');
-          }
-        }
-
-        // 启动前检查nginx配置
-        final configResult = await _checkNginxConfig(nginxDir);
-        if (!configResult.success) {
-          // 配置检查失败，显示错误对话框
-          await _showNginxConfigErrorDialog(configResult.output);
-          return;
-        }
-
-        // 新建nginx进程
-        await Process.start(
-          nginxExe,
-          [],
-          workingDirectory: nginxDir,
-          mode: ProcessStartMode.detached,
+      // PHP 特殊处理：通过 _installedPhpIds 判断
+      if (_installedPhpIds.contains(server.id)) {
+        manager = SoftwareManagerFactory.getManager(
+          Software(
+            id: server.id,
+            name: server.name,
+            byte: server.byte,
+            downloadURL: server.downloadURL,
+            commands: server.commands,
+            attachments: server.attachments,
+            cate4: 'php', // 临时设置 cate4 为 php
+          ),
         );
-
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-        });
-
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动',
-        );
-      } else if (_installedPhpIds.contains(server.id)) {
-        // PHP启动逻辑
-        await _startPhp(server);
-      } else if (server.cate4?.toLowerCase() == 'mysql') {
-        // MySQL启动逻辑
-        await _startMysql(server);
-      } else if (server.cate4?.toLowerCase() == 'pgsql') {
-        // PostgreSQL启动逻辑
-        await _startPgsql(server);
-      } else if (server.cate4?.toLowerCase() == 'mongodb') {
-        // MongoDB启动逻辑
-        await _startMongodb(server);
-      } else if (server.cate4?.toLowerCase() == 'redis') {
-        // Redis启动逻辑
-        await _startRedis(server);
-      } else if (server.cate4?.toLowerCase() == 'rudis') {
-        // Rudis启动逻辑
-        await _startRudis(server);
       } else {
+        // 其他服务器使用 cate4 获取管理器
+        manager = SoftwareManagerFactory.getManager(server);
+      }
+
+      if (manager == null) {
         // 其他服务器类型暂未实现
         setState(() {
           _setServerRunningStatus(server.id, true);
@@ -570,7 +490,36 @@ class _ConsolePageState extends State<ConsolePage> {
           title: '提示',
           message: '启动 ${server.name}（功能待实现）',
         );
+        return;
       }
+
+      // 调用管理器的启动方法
+      final result = await manager.start(server);
+      if (result.$1) {
+        // 启动成功，更新状态
+        setState(() {
+          _setServerRunningStatus(server.id, true);
+        });
+
+        // 对于需要跟踪 PID 的服务器，从管理器获取 PID
+        if (manager is PhpManager) {
+          final pid = manager.getProcessId(server.id);
+          if (pid != null) {
+            _phpProcessIds[server.id] = pid;
+          }
+        } else if (manager is RedisManager) {
+          final pid = manager.getProcessId(server.id);
+          if (pid != null) {
+            _redisProcessIds[server.id] = pid;
+          }
+        } else if (manager is RudisManager) {
+          final pid = manager.getProcessId(server.id);
+          if (pid != null) {
+            _rudisProcessIds[server.id] = pid;
+          }
+        }
+      }
+      // 如果失败，管理器已经显示了错误通知
     } catch (e) {
       await NotificationService.showError(
         title: '启动失败',
@@ -582,130 +531,97 @@ class _ConsolePageState extends State<ConsolePage> {
   /// 静默停止单个服务器（不显示通知，用于应用关闭时）
   Future<void> _stopServerSilently(Software server) async {
     try {
-      // 检查是否是nginx
-      if (server.cate4?.toLowerCase() == 'nginx') {
-        final nginxDir = await _getNginxDirectory();
-        if (nginxDir == null) return;
+      SoftwareManager? manager;
 
-        final nginxExe = path.join(nginxDir, 'nginx.exe');
-        final nginxFile = File(nginxExe);
-        if (!await nginxFile.exists()) return;
-
-        final result = await Process.run(
-          nginxExe,
-          ['-s', 'stop'],
-          runInShell: true,
-          workingDirectory: nginxDir,
+      // PHP 特殊处理：通过 _installedPhpIds 判断
+      if (_installedPhpIds.contains(server.id)) {
+        manager = SoftwareManagerFactory.getManager(
+          Software(
+            id: server.id,
+            name: server.name,
+            byte: server.byte,
+            downloadURL: server.downloadURL,
+            commands: server.commands,
+            attachments: server.attachments,
+            cate4: 'php', // 临时设置 cate4 为 php
+          ),
         );
+      } else {
+        // 其他服务器使用 cate4 获取管理器
+        manager = SoftwareManagerFactory.getManager(server);
+      }
 
-        if (result.exitCode == 0) {
-          _setServerRunningStatus(server.id, false);
+      if (manager == null) {
+        return;
+      }
+
+      // 对于需要跟踪 PID 的服务器，先设置 PID
+      if (manager is PhpManager) {
+        final existingPid = _phpProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
         }
-      } else if (_installedPhpIds.contains(server.id)) {
-        await _stopPhpSilently(server);
-      } else if (server.cate4?.toLowerCase() == 'mysql') {
-        final result = await Process.run('sc', [
-          'stop',
-          'mysql',
-        ], runInShell: true);
-        if (result.exitCode == 0 ||
-            result.stderr.toString().contains('1062') ||
-            result.stderr.toString().contains('服务尚未启动')) {
-          _setServerRunningStatus(server.id, false);
+      } else if (manager is RedisManager) {
+        final existingPid = _redisProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
         }
-      } else if (server.cate4?.toLowerCase() == 'pgsql') {
-        final result = await Process.run('net', [
-          'stop',
-          'PostgreSQL',
-        ], runInShell: true);
-        if (result.exitCode == 0) {
-          _setServerRunningStatus(server.id, false);
+      } else if (manager is RudisManager) {
+        final existingPid = _rudisProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
         }
-      } else if (server.cate4?.toLowerCase() == 'mongodb') {
-        final result = await Process.run('net', [
-          'stop',
-          'MongoDB',
-        ], runInShell: true);
-        if (result.exitCode == 0) {
-          _setServerRunningStatus(server.id, false);
+      }
+
+      // 调用管理器的静默停止方法
+      final result = await manager.stopSilently(server);
+      if (result.$1) {
+        _setServerRunningStatus(server.id, false);
+        // 清除 PID
+        if (manager is PhpManager) {
+          _phpProcessIds.remove(server.id);
+          manager.clearProcessId(server.id);
+        } else if (manager is RedisManager) {
+          _redisProcessIds.remove(server.id);
+          manager.clearProcessId(server.id);
+        } else if (manager is RudisManager) {
+          _rudisProcessIds.remove(server.id);
+          manager.clearProcessId(server.id);
         }
-      } else if (server.cate4?.toLowerCase() == 'redis') {
-        await _stopRedisSilently(server);
-      } else if (server.cate4?.toLowerCase() == 'rudis') {
-        await _stopRudisSilently(server);
       }
     } catch (e) {
       if (kDebugMode) {
         print('[静默停止] 停止 ${server.name} 时发生错误: $e');
       }
+      // 即使出错也更新状态
+      _setServerRunningStatus(server.id, false);
     }
   }
 
   /// 停止单个服务器
   Future<void> _stopServer(Software server) async {
     try {
-      // 检查是否是nginx
-      if (server.cate4?.toLowerCase() == 'nginx') {
-        final nginxDir = await _getNginxDirectory();
-        if (nginxDir == null) {
-          await NotificationService.showError(
-            title: '停止失败',
-            message: 'nginx未安装',
-          );
-          return;
-        }
+      SoftwareManager? manager;
 
-        final nginxExe = path.join(nginxDir, 'nginx.exe');
-        final nginxFile = File(nginxExe);
-        if (!await nginxFile.exists()) {
-          await NotificationService.showError(
-            title: '停止失败',
-            message: '找不到nginx.exe文件: $nginxExe',
-          );
-          return;
-        }
-
-        // 执行停止命令: nginx目录\nginx -s stop
-        final result = await Process.run(
-          nginxExe,
-          ['-s', 'stop'],
-          runInShell: true,
-          workingDirectory: nginxDir,
+      // PHP 特殊处理：通过 _installedPhpIds 判断
+      if (_installedPhpIds.contains(server.id)) {
+        manager = SoftwareManagerFactory.getManager(
+          Software(
+            id: server.id,
+            name: server.name,
+            byte: server.byte,
+            downloadURL: server.downloadURL,
+            commands: server.commands,
+            attachments: server.attachments,
+            cate4: 'php', // 临时设置 cate4 为 php
+          ),
         );
-
-        if (result.exitCode == 0) {
-          setState(() {
-            _setServerRunningStatus(server.id, false);
-          });
-          await NotificationService.showSuccess(
-            title: '停止成功',
-            message: '${server.name} 已停止',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '停止失败',
-            message: '停止 ${server.name} 失败: ${result.stderr}',
-          );
-        }
-      } else if (_installedPhpIds.contains(server.id)) {
-        // PHP停止逻辑
-        await _stopPhp(server);
-      } else if (server.cate4?.toLowerCase() == 'mysql') {
-        // MySQL停止逻辑
-        await _stopMysql(server);
-      } else if (server.cate4?.toLowerCase() == 'pgsql') {
-        // PostgreSQL停止逻辑
-        await _stopPgsql(server);
-      } else if (server.cate4?.toLowerCase() == 'mongodb') {
-        // MongoDB停止逻辑
-        await _stopMongodb(server);
-      } else if (server.cate4?.toLowerCase() == 'redis') {
-        // Redis停止逻辑
-        await _stopRedis(server);
-      } else if (server.cate4?.toLowerCase() == 'rudis') {
-        // Rudis停止逻辑
-        await _stopRudis(server);
       } else {
+        // 其他服务器使用 cate4 获取管理器
+        manager = SoftwareManagerFactory.getManager(server);
+      }
+
+      if (manager == null) {
         // 其他服务器类型暂未实现
         setState(() {
           _setServerRunningStatus(server.id, false);
@@ -714,7 +630,46 @@ class _ConsolePageState extends State<ConsolePage> {
           title: '提示',
           message: '停止 ${server.name}（功能待实现）',
         );
+        return;
       }
+
+      // 对于需要跟踪 PID 的服务器，先设置 PID
+      if (manager is PhpManager) {
+        final existingPid = _phpProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
+        }
+      } else if (manager is RedisManager) {
+        final existingPid = _redisProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
+        }
+      } else if (manager is RudisManager) {
+        final existingPid = _rudisProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
+        }
+      }
+
+      // 调用管理器的停止方法
+      final result = await manager.stop(server);
+      if (result.$1) {
+        setState(() {
+          _setServerRunningStatus(server.id, false);
+        });
+        // 清除 PID
+        if (manager is PhpManager) {
+          _phpProcessIds.remove(server.id);
+          manager.clearProcessId(server.id);
+        } else if (manager is RedisManager) {
+          _redisProcessIds.remove(server.id);
+          manager.clearProcessId(server.id);
+        } else if (manager is RudisManager) {
+          _rudisProcessIds.remove(server.id);
+          manager.clearProcessId(server.id);
+        }
+      }
+      // 如果失败，管理器已经显示了错误通知
     } catch (e) {
       await NotificationService.showError(
         title: '停止失败',
@@ -726,79 +681,79 @@ class _ConsolePageState extends State<ConsolePage> {
   /// 重启单个服务器
   Future<void> _restartServer(Software server) async {
     try {
-      // 检查是否是nginx
-      if (server.cate4?.toLowerCase() == 'nginx') {
-        final nginxDir = await _getNginxDirectory();
-        if (nginxDir == null) {
-          await NotificationService.showError(
-            title: '重启失败',
-            message: 'nginx未安装',
-          );
-          return;
-        }
+      SoftwareManager? manager;
 
-        final nginxExe = path.join(nginxDir, 'nginx.exe');
-        final nginxFile = File(nginxExe);
-        if (!await nginxFile.exists()) {
-          await NotificationService.showError(
-            title: '重启失败',
-            message: '找不到nginx.exe文件: $nginxExe',
-          );
-          return;
-        }
-
-        // 重启前检查nginx配置
-        final configResult = await _checkNginxConfig(nginxDir);
-        if (!configResult.success) {
-          // 配置检查失败，显示错误对话框
-          await _showNginxConfigErrorDialog(configResult.output);
-          return;
-        }
-
-        // 执行重启命令: nginx目录\nginx -s reopen
-        final result = await Process.run(
-          nginxExe,
-          ['-s', 'reload'],
-          runInShell: true,
-          workingDirectory: nginxDir,
+      // PHP 特殊处理：通过 _installedPhpIds 判断
+      if (_installedPhpIds.contains(server.id)) {
+        manager = SoftwareManagerFactory.getManager(
+          Software(
+            id: server.id,
+            name: server.name,
+            byte: server.byte,
+            downloadURL: server.downloadURL,
+            commands: server.commands,
+            attachments: server.attachments,
+            cate4: 'php', // 临时设置 cate4 为 php
+          ),
         );
-
-        if (result.exitCode == 0) {
-          await NotificationService.showSuccess(
-            title: '重启成功',
-            message: '${server.name} 已重启',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '重启失败',
-            message: '重启 ${server.name} 失败: ${result.stderr}',
-          );
-        }
-      } else if (_installedPhpIds.contains(server.id)) {
-        // PHP重启逻辑
-        await _restartPhp(server);
-      } else if (server.cate4?.toLowerCase() == 'mysql') {
-        // MySQL重启逻辑
-        await _restartMysql(server);
-      } else if (server.cate4?.toLowerCase() == 'pgsql') {
-        // PostgreSQL重启逻辑
-        await _restartPgsql(server);
-      } else if (server.cate4?.toLowerCase() == 'mongodb') {
-        // MongoDB重启逻辑
-        await _restartMongodb(server);
-      } else if (server.cate4?.toLowerCase() == 'redis') {
-        // Redis重启逻辑
-        await _restartRedis(server);
-      } else if (server.cate4?.toLowerCase() == 'rudis') {
-        // Rudis重启逻辑
-        await _restartRudis(server);
       } else {
+        // 其他服务器使用 cate4 获取管理器
+        manager = SoftwareManagerFactory.getManager(server);
+      }
+
+      if (manager == null) {
         // 其他服务器类型暂未实现
         await NotificationService.showInfo(
           title: '提示',
           message: '重启 ${server.name}（功能待实现）',
         );
+        return;
       }
+
+      // 对于需要跟踪 PID 的服务器，先设置 PID
+      if (manager is PhpManager) {
+        final existingPid = _phpProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
+        }
+      } else if (manager is RedisManager) {
+        final existingPid = _redisProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
+        }
+      } else if (manager is RudisManager) {
+        final existingPid = _rudisProcessIds[server.id];
+        if (existingPid != null) {
+          manager.setProcessId(server.id, existingPid);
+        }
+      }
+
+      // 调用管理器的重启方法
+      final result = await manager.restart(server);
+      if (result.$1) {
+        setState(() {
+          _setServerRunningStatus(server.id, true);
+        });
+
+        // 对于需要跟踪 PID 的服务器，从管理器获取新的 PID
+        if (manager is PhpManager) {
+          final pid = manager.getProcessId(server.id);
+          if (pid != null) {
+            _phpProcessIds[server.id] = pid;
+          }
+        } else if (manager is RedisManager) {
+          final pid = manager.getProcessId(server.id);
+          if (pid != null) {
+            _redisProcessIds[server.id] = pid;
+          }
+        } else if (manager is RudisManager) {
+          final pid = manager.getProcessId(server.id);
+          if (pid != null) {
+            _rudisProcessIds[server.id] = pid;
+          }
+        }
+      }
+      // 如果失败，管理器已经显示了错误通知
     } catch (e) {
       await NotificationService.showError(
         title: '重启失败',
@@ -2184,18 +2139,6 @@ class _ConsolePageState extends State<ConsolePage> {
     return regex.hasMatch(name);
   }
 
-  /// 生成默认的server_name（基于项目名称，去除_, (), []）
-  String _generateDefaultServerName(String projectName) {
-    // 去除_, (), []
-    String serverName = projectName
-        .replaceAll('_', '')
-        .replaceAll('(', '')
-        .replaceAll(')', '')
-        .replaceAll('[', '')
-        .replaceAll(']', '');
-    return '$serverName.localhost';
-  }
-
   /// 检查server_name:port是否已存在
   bool _isServerNamePortExists(String serverName, String port) {
     // 如果server_name是'.localhost'，视为空
@@ -2830,1683 +2773,6 @@ class _ConsolePageState extends State<ConsolePage> {
 
       await phpConfFile.writeAsString(lines.join('\n'));
     }
-  }
-
-  /// 检查端口是否被指定进程占用
-  /// 返回进程ID，如果未找到则返回null
-  /// [spawnerExe] php-cgi-spawner.exe的完整路径，用于判断是否为PHP进程占用
-  /// 如果端口被其他进程占用，返回-1表示端口被占用但不是PHP进程
-  Future<int?> _getPortProcessId(int port, String? spawnerExe) async {
-    try {
-      // 第一步：使用 netstat 获取 PID
-      final netstatResult = await Process.run('cmd', [
-        '/c',
-        'netstat -ano | findstr :$port',
-      ], runInShell: true);
-
-      final netstatOutput = netstatResult.stdout.toString();
-      if (netstatOutput.isEmpty) {
-        // 端口未被占用
-        return null;
-      }
-
-      // 解析 netstat 输出，提取 PID（最后一列）
-      final lines = netstatOutput.split('\n');
-      int? pid;
-      for (final line in lines) {
-        final trimmedLine = line.trim();
-        if (trimmedLine.isEmpty) continue;
-
-        // netstat 输出格式：TCP    0.0.0.0:9016    0.0.0.0:0    LISTENING    1234
-        final parts = trimmedLine.split(RegExp(r'\s+'));
-        if (parts.length >= 5 && parts[3] == 'LISTENING') {
-          final parsedPid = int.tryParse(parts.last);
-          if (parsedPid != null) {
-            pid = parsedPid;
-            break; // 找到第一个 PID 即可
-          }
-        }
-      }
-
-      if (pid == null) {
-        // 未找到 PID
-        return null;
-      }
-
-      // 如果 spawnerExe 为 null，直接返回 PID
-      if (spawnerExe == null) {
-        return pid;
-      }
-
-      // 第二步：使用 PowerShell 获取 exe 路径
-      final psCommand =
-          '(Get-Process -Id $pid -ErrorAction SilentlyContinue).Path';
-      final psResult = await Process.run('powershell', [
-        '-NoProfile',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        psCommand,
-      ], runInShell: true);
-
-      final exePath = psResult.stdout.toString().trim();
-      if (exePath.isEmpty) {
-        // 无法获取进程路径，返回 PID（可能是权限问题）
-        return pid;
-      }
-
-      // 判断 exe 是否为 spawnerExe（需要规范化路径进行比较）
-      final normalizedExePath = exePath.replaceAll('\\', '/').toLowerCase();
-      final normalizedSpawnerExe = spawnerExe
-          .replaceAll('\\', '/')
-          .toLowerCase();
-
-      if (normalizedExePath == normalizedSpawnerExe) {
-        // 是 PHP 进程，返回 PID
-        return pid;
-      } else {
-        // 不是 PHP 进程，端口被其他程序占用
-        return -1;
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('检查端口进程失败: $e');
-      }
-      return null;
-    }
-  }
-
-  /// 获取PHP目录
-  Future<String?> _getPhpDirectory(String phpId) async {
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) return null;
-
-    final phpDir = Directory(path.join(storagePath, 'php', phpId));
-    if (!await phpDir.exists()) return null;
-
-    return phpDir.path;
-  }
-
-  /// 启动PHP
-  Future<void> _startPhp(Software server) async {
-    try {
-      // 检查是否有暂存的PID，如果有则先停止旧进程
-      final existingPid = _phpProcessIds[server.id];
-      if (existingPid != null) {
-        if (kDebugMode) {
-          print('[PHP启动] 发现暂存的PID: $existingPid，先停止旧进程');
-        }
-        try {
-          await Process.run('taskkill', [
-            '/F',
-            '/T',
-            '/PID',
-            existingPid.toString(),
-          ], runInShell: true);
-        } catch (e) {
-          if (kDebugMode) {
-            print('[PHP启动] 停止旧进程失败（可能进程已不存在）: $e');
-          }
-        }
-        // 清除暂存的PID
-        _phpProcessIds.remove(server.id);
-      }
-
-      final phpDir = await _getPhpDirectory(server.id);
-      if (phpDir == null) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'PHP未安装或目录不存在',
-        );
-        return;
-      }
-
-      final spawnerExe = path.join(phpDir, 'php-cgi-spawner.exe');
-      final spawnerFile = File(spawnerExe);
-      if (!await spawnerFile.exists()) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '找不到php-cgi-spawner.exe文件',
-        );
-        return;
-      }
-      // 读取或创建端口配置
-      final prefs = await SharedPreferences.getInstance();
-      final portKey = 'php_port_${server.id}';
-      int? port = prefs.getInt(portKey);
-
-      if (port == null) {
-        if (kDebugMode) {
-          print('[PHP启动] 未找到端口配置，开始创建配置');
-        }
-        // 没有端口配置，需要创建
-        final nginxDir = await _getNginxDirectory();
-        if (nginxDir == null) {
-          if (kDebugMode) {
-            print('[PHP启动失败] nginx未安装，无法创建PHP配置');
-          }
-          await NotificationService.showError(
-            title: '启动失败',
-            message: 'nginx未安装，无法创建PHP配置',
-          );
-          return;
-        }
-
-        // 获取可用端口
-        port = await _getAvailablePhpPort(server.id);
-        if (kDebugMode) {
-          print('[PHP启动] 获取到可用端口: $port');
-        }
-        // 确保PHP配置文件存在
-        await _ensurePhpConfigExists(nginxDir, server.id);
-      } else {
-        if (kDebugMode) {
-          print('[PHP启动] 使用已配置的端口: $port');
-        }
-      }
-
-      // 执行启动命令: .\php-cgi-spawner.exe "php-cgi.exe -c php.ini" 运行端口 4
-      final command = '$spawnerExe "php-cgi.exe -c php.ini" $port 4';
-      print('[PHP启动] 执行命令: $command');
-
-      final process = await Process.start(
-        'powershell',
-        ['-NoProfile', '-Command', command],
-        runInShell: true,
-        workingDirectory: phpDir,
-      );
-
-      // 消费 stdout（即使为空）
-      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
-        if (data.isNotEmpty) {
-          print('[PHP启动] stdout: $data');
-        }
-      });
-
-      // 消费 stderr
-      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
-        if (data.isNotEmpty) {
-          print('[PHP启动] stderr: $data');
-        }
-      });
-
-      // ★ 唯一的完成信号：等待命令执行完毕
-      final exitCode = await process.exitCode;
-      print('[PHP启动] PowerShell 命令执行完成，退出码: $exitCode');
-
-      // 等待一小段时间让 php-cgi-spawner.exe 进程启动并绑定端口
-      await Future.delayed(const Duration(milliseconds: 2000));
-
-      // 检查端口是否被php-cgi-spawner.exe占用
-      final processId = await _getPortProcessId(port, spawnerExe);
-
-      if (processId != null && processId > 0) {
-        // processId > 0 表示是PHP进程
-        if (kDebugMode) {
-          print('[PHP启动成功] 端口 $port 被php-cgi-spawner.exe占用，进程ID: $processId');
-        }
-        // 启动成功
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-          _phpProcessIds[server.id] = processId;
-        });
-
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动（端口: $port）',
-        );
-      } else if (processId == -1) {
-        // processId == -1 表示端口被其他进程占用
-        if (kDebugMode) {
-          print('[PHP启动失败] 端口 $port 被其他进程占用');
-        }
-        final nginxDir = await _getNginxDirectory();
-        if (nginxDir == null) {
-          if (kDebugMode) {
-            print('[PHP启动失败] 端口被占用，但nginx未安装，无法重新分配端口');
-          }
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '端口被占用，但nginx未安装，无法重新分配端口',
-          );
-          return;
-        }
-
-        // 重新获取可用端口
-        final newPort = await _getAvailablePhpPort(server.id);
-        if (kDebugMode) {
-          print('[PHP启动] 重新分配端口: $port -> $newPort');
-        }
-        // 更新PHP配置文件
-        await _ensurePhpConfigExists(nginxDir, server.id, newPort);
-
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '端口 $port 被占用，已重新分配端口为 $newPort，请重试',
-        );
-      } else {
-        // processId == null 表示端口未被占用
-        if (kDebugMode) {
-          print('[PHP启动失败] 端口 $port 未被占用，可能是PHP安装有问题或启动命令执行失败');
-          print('$processId');
-        }
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'PHP启动失败，请检查PHP安装是否正确，或尝试重新安装PHP',
-        );
-      }
-    } catch (e, stackTrace) {
-      if (kDebugMode) {
-        print('[PHP启动失败] 发生异常: $e');
-        print('[PHP启动失败] 堆栈跟踪: $stackTrace');
-      }
-      await NotificationService.showError(
-        title: '启动失败',
-        message: '启动 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 静默停止PHP（不显示通知）
-  Future<void> _stopPhpSilently(Software server) async {
-    try {
-      int? processId = _phpProcessIds[server.id];
-
-      if (processId == null) {
-        final phpDir = await _getPhpDirectory(server.id);
-        if (phpDir != null) {
-          final spawnerExe = path.join(phpDir, 'php-cgi-spawner.exe');
-          final prefs = await SharedPreferences.getInstance();
-          final portKey = 'php_port_${server.id}';
-          final port = prefs.getInt(portKey);
-          if (port != null) {
-            final foundPid = await _getPortProcessId(port, spawnerExe);
-            if (foundPid != null && foundPid > 0) {
-              processId = foundPid;
-            }
-          }
-        }
-      }
-
-      if (processId == null) {
-        _setServerRunningStatus(server.id, false);
-        _phpProcessIds.remove(server.id);
-        return;
-      }
-
-      await Process.run('taskkill', [
-        '/F',
-        '/T',
-        '/PID',
-        processId.toString(),
-      ], runInShell: true);
-
-      _setServerRunningStatus(server.id, false);
-      _phpProcessIds.remove(server.id);
-    } catch (e) {
-      if (kDebugMode) {
-        print('[静默停止PHP] 发生异常: $e');
-      }
-      _setServerRunningStatus(server.id, false);
-      _phpProcessIds.remove(server.id);
-    }
-  }
-
-  /// 停止PHP
-  Future<void> _stopPhp(Software server) async {
-    try {
-      int? processId = _phpProcessIds[server.id];
-
-      // 如果没有暂存的PID，尝试通过端口查找进程
-      if (processId == null) {
-        if (kDebugMode) {
-          print('[PHP停止] 未找到暂存的PID，尝试通过端口查找进程');
-        }
-
-        // 获取PHP目录和spawnerExe路径
-        final phpDir = await _getPhpDirectory(server.id);
-        if (phpDir != null) {
-          final spawnerExe = path.join(phpDir, 'php-cgi-spawner.exe');
-
-          // 获取端口
-          final prefs = await SharedPreferences.getInstance();
-          final portKey = 'php_port_${server.id}';
-          final port = prefs.getInt(portKey);
-
-          if (port != null) {
-            // 通过端口查找进程
-            final foundPid = await _getPortProcessId(port, spawnerExe);
-            if (foundPid != null && foundPid > 0) {
-              processId = foundPid;
-              if (kDebugMode) {
-                print('[PHP停止] 通过端口找到进程ID: $processId');
-              }
-            }
-          }
-        }
-      }
-
-      if (processId == null) {
-        // 仍然找不到PID，可能进程已经停止
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _phpProcessIds.remove(server.id);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 进程可能已经停止',
-        );
-        return;
-      }
-
-      if (kDebugMode) {
-        print('[PHP停止] 正在停止进程ID: $processId');
-      }
-
-      // 使用 taskkill 结束进程树
-      final result = await Process.run('taskkill', [
-        '/F',
-        '/T',
-        '/PID',
-        processId.toString(),
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        if (kDebugMode) {
-          print('[PHP停止] 进程树已成功终止');
-        }
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _phpProcessIds.remove(server.id);
-        });
-
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
-      } else {
-        // 进程可能已经不存在
-        if (kDebugMode) {
-          print('[PHP停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
-        }
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _phpProcessIds.remove(server.id);
-        });
-
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 进程可能已经停止',
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[PHP停止失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '停止失败',
-        message: '停止 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 重启PHP
-  Future<void> _restartPhp(Software server) async {
-    // 先停止
-    await _stopPhp(server);
-    // 等待一小段时间
-    await Future.delayed(const Duration(milliseconds: 500));
-    // 再启动
-    await _startPhp(server);
-  }
-
-  /// 获取MySQL目录
-  Future<String?> _getMysqlDirectory(String mysqlId) async {
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) return null;
-
-    // MySQL可能在servers或databases目录下
-    final serversDir = Directory(path.join(storagePath, 'servers', mysqlId));
-    final databasesDir = Directory(
-      path.join(storagePath, 'databases', mysqlId),
-    );
-
-    if (await serversDir.exists()) {
-      return serversDir.path;
-    } else if (await databasesDir.exists()) {
-      return databasesDir.path;
-    }
-
-    return null;
-  }
-
-  /// 启动MySQL
-  Future<void> _startMysql(Software server) async {
-    try {
-      final mysqlDir = await _getMysqlDirectory(server.id);
-      if (mysqlDir == null) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'MySQL未安装或目录不存在',
-        );
-        return;
-      }
-
-      // 步骤1: 先执行 sc stop mysql（停止服务）
-      if (kDebugMode) {
-        print('[MySQL启动] 执行 sc stop mysql');
-      }
-      final stopResult = await Process.run('sc', [
-        'stop',
-        'mysql',
-      ], runInShell: true);
-
-      // 忽略停止失败的错误（服务可能未运行）
-      if (stopResult.exitCode != 0) {
-        if (kDebugMode) {
-          print('[MySQL启动] sc stop mysql 退出码: ${stopResult.exitCode}');
-        }
-      } else {
-        if (kDebugMode) {
-          print('[MySQL启动] MySQL服务已停止');
-        }
-        // 等待一小段时间确保服务完全停止
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-
-      // 步骤2: 尝试启动服务
-      if (kDebugMode) {
-        print('[MySQL启动] 执行 sc start mysql');
-      }
-      final startResult = await Process.run('sc', [
-        'start',
-        'mysql',
-      ], runInShell: true);
-
-      // 检查是否报错 "[SC] OpenService 失败 1060:指定的服务未安装。"
-      final errorOutput = startResult.stderr.toString();
-      if (errorOutput.contains('1060') ||
-          errorOutput.contains('指定的服务未安装') ||
-          errorOutput.toLowerCase().contains('service does not exist')) {
-        // 服务未安装，需要安装服务
-        if (kDebugMode) {
-          print('[MySQL启动] MySQL服务未安装，开始安装服务');
-        }
-
-        final mysqldExe = path.join(mysqlDir, 'bin', 'mysqld.exe');
-        final mysqldFile = File(mysqldExe);
-        if (!await mysqldFile.exists()) {
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '找不到mysqld.exe文件: $mysqldExe',
-          );
-          return;
-        }
-
-        // 执行 mysqld -install
-        if (kDebugMode) {
-          print('[MySQL启动] 执行 mysqld -install');
-        }
-        final installResult = await Process.run(
-          mysqldExe,
-          ['-install'],
-          runInShell: true,
-          workingDirectory: mysqlDir,
-        );
-
-        if (installResult.exitCode != 0) {
-          final installError = installResult.stderr.toString();
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '安装MySQL服务失败: $installError',
-          );
-          return;
-        }
-
-        if (kDebugMode) {
-          print('[MySQL启动] MySQL服务安装成功');
-        }
-
-        // 等待一小段时间确保服务安装完成
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        // 再次尝试启动服务
-        if (kDebugMode) {
-          print('[MySQL启动] 再次执行 sc start mysql');
-        }
-        final retryStartResult = await Process.run('sc', [
-          'start',
-          'mysql',
-        ], runInShell: true);
-
-        if (retryStartResult.exitCode == 0) {
-          setState(() {
-            _setServerRunningStatus(server.id, true);
-          });
-          await NotificationService.showSuccess(
-            title: '启动成功',
-            message: '${server.name} 已启动',
-          );
-        } else {
-          final retryError = retryStartResult.stderr.toString();
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '启动MySQL服务失败: $retryError',
-          );
-        }
-      } else if (startResult.exitCode == 0) {
-        // 启动成功
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-        });
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动',
-        );
-      } else {
-        // 启动失败
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '启动MySQL服务失败: $errorOutput',
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[MySQL启动失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '启动失败',
-        message: '启动 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 停止MySQL
-  Future<void> _stopMysql(Software server) async {
-    try {
-      // 执行 sc stop mysql
-      if (kDebugMode) {
-        print('[MySQL停止] 执行 sc stop mysql');
-      }
-      final result = await Process.run('sc', [
-        'stop',
-        'mysql',
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-        });
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
-      } else {
-        final errorOutput = result.stderr.toString();
-        // 如果服务未运行或服务尚未启动，也视为成功
-        if (errorOutput.contains('1062') ||
-            errorOutput.contains('服务尚未启动') ||
-            errorOutput.toLowerCase().contains('service does not exist') ||
-            errorOutput.contains('指定的服务未安装') ||
-            errorOutput.toLowerCase().contains('not running')) {
-          setState(() {
-            _setServerRunningStatus(server.id, false);
-          });
-          await NotificationService.showInfo(
-            title: '提示',
-            message: '${server.name} 服务未运行',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '停止失败',
-            message: '停止 ${server.name} 失败: $errorOutput',
-          );
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[MySQL停止失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '停止失败',
-        message: '停止 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 重启MySQL
-  Future<void> _restartMysql(Software server) async {
-    // 先停止
-    await _stopMysql(server);
-    // 等待一小段时间
-    await Future.delayed(const Duration(milliseconds: 500));
-    // 再启动
-    await _startMysql(server);
-  }
-
-  /// 检查PostgreSQL服务状态
-  /// 返回 true 如果服务正在运行，false 如果服务已停止或不存在
-  Future<bool> _isPgsqlServiceRunning() async {
-    try {
-      final result = await Process.run('sc', [
-        'query',
-        'PostgreSQL',
-      ], runInShell: true);
-
-      if (result.exitCode != 0) {
-        // 服务不存在或查询失败
-        return false;
-      }
-
-      final output = result.stdout.toString();
-      // 检查服务状态，如果包含 "RUNNING" 则表示服务正在运行
-      return output.contains('RUNNING');
-    } catch (e) {
-      if (kDebugMode) {
-        print('[PostgreSQL状态检查] 发生异常: $e');
-      }
-      return false;
-    }
-  }
-
-  /// 启动PostgreSQL
-  Future<void> _startPgsql(Software server) async {
-    try {
-      // 先检查服务是否已经启动
-      final isRunning = await _isPgsqlServiceRunning();
-      if (isRunning) {
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 服务已经启动',
-        );
-        return;
-      }
-
-      // 执行 net start PostgreSQL
-      if (kDebugMode) {
-        print('[PostgreSQL启动] 执行 net start PostgreSQL');
-      }
-      final result = await Process.run('net', [
-        'start',
-        'PostgreSQL',
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        // 启动成功
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-        });
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动',
-        );
-      } else {
-        final errorOutput = result.stderr.toString();
-        // 检查是否服务已经启动
-        final output = result.stdout.toString() + errorOutput;
-        if (output.toLowerCase().contains('already started') ||
-            output.toLowerCase().contains('已经启动') ||
-            output.toLowerCase().contains('is already running')) {
-          setState(() {
-            _setServerRunningStatus(server.id, true);
-          });
-          await NotificationService.showInfo(
-            title: '提示',
-            message: '${server.name} 服务已经启动',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '启动 ${server.name} 失败: $errorOutput',
-          );
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[PostgreSQL启动失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '启动失败',
-        message: '启动 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 停止PostgreSQL
-  Future<void> _stopPgsql(Software server) async {
-    try {
-      // 先检查服务是否已经停止
-      final isRunning = await _isPgsqlServiceRunning();
-      if (!isRunning) {
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 服务已经停止',
-        );
-        return;
-      }
-
-      // 执行 net stop PostgreSQL
-      if (kDebugMode) {
-        print('[PostgreSQL停止] 执行 net stop PostgreSQL');
-      }
-      final result = await Process.run('net', [
-        'stop',
-        'PostgreSQL',
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-        });
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
-      } else {
-        final errorOutput = result.stderr.toString();
-        // 检查是否服务已经停止
-        final output = result.stdout.toString() + errorOutput;
-        if (output.toLowerCase().contains('not started') ||
-            output.toLowerCase().contains('尚未启动') ||
-            output.toLowerCase().contains('is not running') ||
-            output.toLowerCase().contains('not running')) {
-          setState(() {
-            _setServerRunningStatus(server.id, false);
-          });
-          await NotificationService.showInfo(
-            title: '提示',
-            message: '${server.name} 服务已经停止',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '停止失败',
-            message: '停止 ${server.name} 失败: $errorOutput',
-          );
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[PostgreSQL停止失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '停止失败',
-        message: '停止 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 重启PostgreSQL
-  Future<void> _restartPgsql(Software server) async {
-    // 先停止
-    await _stopPgsql(server);
-    // 等待一小段时间
-    await Future.delayed(const Duration(milliseconds: 500));
-    // 再启动
-    await _startPgsql(server);
-  }
-
-  /// 检查MongoDB服务状态
-  /// 返回 true 如果服务正在运行，false 如果服务已停止或不存在
-  Future<bool> _isMongodbServiceRunning() async {
-    try {
-      final result = await Process.run('sc', [
-        'query',
-        'MongoDB',
-      ], runInShell: true);
-
-      if (result.exitCode != 0) {
-        // 服务不存在或查询失败
-        return false;
-      }
-
-      final output = result.stdout.toString();
-      // 检查服务状态，如果包含 "RUNNING" 则表示服务正在运行
-      return output.contains('RUNNING');
-    } catch (e) {
-      if (kDebugMode) {
-        print('[MongoDB状态检查] 发生异常: $e');
-      }
-      return false;
-    }
-  }
-
-  /// 启动MongoDB
-  Future<void> _startMongodb(Software server) async {
-    try {
-      // 先检查服务是否已经启动
-      final isRunning = await _isMongodbServiceRunning();
-      if (isRunning) {
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 服务已经启动',
-        );
-        return;
-      }
-
-      // 执行 net start MongoDB
-      if (kDebugMode) {
-        print('[MongoDB启动] 执行 net start MongoDB');
-      }
-      final result = await Process.run('net', [
-        'start',
-        'MongoDB',
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        // 启动成功
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-        });
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动',
-        );
-      } else {
-        final errorOutput = result.stderr.toString();
-        // 检查是否服务已经启动
-        final output = result.stdout.toString() + errorOutput;
-        if (output.toLowerCase().contains('already started') ||
-            output.toLowerCase().contains('已经启动') ||
-            output.toLowerCase().contains('is already running')) {
-          setState(() {
-            _setServerRunningStatus(server.id, true);
-          });
-          await NotificationService.showInfo(
-            title: '提示',
-            message: '${server.name} 服务已经启动',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '启动失败',
-            message: '启动 ${server.name} 失败: $errorOutput',
-          );
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[MongoDB启动失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '启动失败',
-        message: '启动 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 停止MongoDB
-  Future<void> _stopMongodb(Software server) async {
-    try {
-      // 先检查服务是否已经停止
-      final isRunning = await _isMongodbServiceRunning();
-      if (!isRunning) {
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 服务已经停止',
-        );
-        return;
-      }
-
-      // 执行 net stop MongoDB
-      if (kDebugMode) {
-        print('[MongoDB停止] 执行 net stop MongoDB');
-      }
-      final result = await Process.run('net', [
-        'stop',
-        'MongoDB',
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-        });
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
-      } else {
-        final errorOutput = result.stderr.toString();
-        // 检查是否服务已经停止
-        final output = result.stdout.toString() + errorOutput;
-        if (output.toLowerCase().contains('not started') ||
-            output.toLowerCase().contains('尚未启动') ||
-            output.toLowerCase().contains('is not running') ||
-            output.toLowerCase().contains('not running')) {
-          setState(() {
-            _setServerRunningStatus(server.id, false);
-          });
-          await NotificationService.showInfo(
-            title: '提示',
-            message: '${server.name} 服务已经停止',
-          );
-        } else {
-          await NotificationService.showError(
-            title: '停止失败',
-            message: '停止 ${server.name} 失败: $errorOutput',
-          );
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[MongoDB停止失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '停止失败',
-        message: '停止 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 重启MongoDB
-  Future<void> _restartMongodb(Software server) async {
-    // 先停止
-    await _stopMongodb(server);
-    // 等待一小段时间
-    await Future.delayed(const Duration(milliseconds: 500));
-    // 再启动
-    await _startMongodb(server);
-  }
-
-  /// 获取Redis目录
-  Future<String?> _getRedisDirectory(String redisId) async {
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) return null;
-
-    // Redis可能在servers或databases目录下
-    final serversDir = Directory(path.join(storagePath, 'servers', redisId));
-    final databasesDir = Directory(
-      path.join(storagePath, 'databases', redisId),
-    );
-
-    if (await serversDir.exists()) {
-      return serversDir.path;
-    } else if (await databasesDir.exists()) {
-      return databasesDir.path;
-    }
-
-    return null;
-  }
-
-  /// 启动Redis
-  Future<void> _startRedis(Software server) async {
-    try {
-      // 检查是否有暂存的PID，如果有则先停止旧进程
-      final existingPid = _redisProcessIds[server.id];
-      if (existingPid != null) {
-        if (kDebugMode) {
-          print('[Redis启动] 发现暂存的PID: $existingPid，先停止旧进程');
-        }
-        try {
-          await Process.run('taskkill', [
-            '/F',
-            '/T',
-            '/PID',
-            existingPid.toString(),
-          ], runInShell: true);
-        } catch (e) {
-          if (kDebugMode) {
-            print('[Redis启动] 停止旧进程失败（可能进程已不存在）: $e');
-          }
-        }
-        // 清除暂存的PID
-        _redisProcessIds.remove(server.id);
-      }
-
-      final redisDir = await _getRedisDirectory(server.id);
-      if (redisDir == null) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'Redis未安装或目录不存在',
-        );
-        return;
-      }
-
-      final redisServerExe = path.join(redisDir, 'redis-server.exe');
-      final redisServerFile = File(redisServerExe);
-      if (!await redisServerFile.exists()) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '找不到redis-server.exe文件: $redisServerExe',
-        );
-        return;
-      }
-
-      final redisConf = path.join(redisDir, 'redis.windows.conf');
-      final redisConfFile = File(redisConf);
-      if (!await redisConfFile.exists()) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '找不到redis.windows.conf文件: $redisConf',
-        );
-        return;
-      }
-
-      // 执行启动命令: redis-server.exe redis.windows.conf
-      if (kDebugMode) {
-        print('[Redis启动] 执行命令: $redisServerExe $redisConf');
-      }
-
-      final process = await Process.start(
-        redisServerExe,
-        [redisConf],
-        workingDirectory: redisDir,
-        mode: ProcessStartMode.normal,
-      );
-
-      // 记录进程ID
-      final pid = process.pid;
-      if (kDebugMode) {
-        print('[Redis启动] 进程ID: $pid');
-      }
-
-      // 监听输出以判断启动是否成功
-      bool startupSuccess = false;
-      bool startupFailed = false;
-
-      // 消费 stdout
-      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
-        if (data.contains('Ready to accept connections')) {
-          startupSuccess = true;
-        }
-        if (data.contains('Could not create server TCP listening socket')) {
-          startupFailed = true;
-        }
-      });
-
-      // 消费 stderr
-      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
-        if (kDebugMode) {
-          print('[Redis启动] stderr: $data');
-        }
-        if (data.contains('Could not create server TCP listening socket')) {
-          startupFailed = true;
-        }
-      });
-
-      // 等待一段时间以便 Redis 启动并输出日志
-      await Future.delayed(const Duration(seconds: 3));
-
-      if (startupSuccess) {
-        // 启动成功
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-          _redisProcessIds[server.id] = pid;
-        });
-
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动（进程ID: $pid）',
-        );
-      } else if (startupFailed) {
-        // 启动失败
-        // 杀死进程
-        try {
-          await Process.run('taskkill', [
-            '/F',
-            '/T',
-            '/PID',
-            pid.toString(),
-          ], runInShell: true);
-        } catch (e) {
-          if (kDebugMode) {
-            print('[Redis启动失败] 清理进程失败: $e');
-          }
-        }
-
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'Redis启动失败: 端口被占用', //$errorMessage
-        );
-      } else {
-        // 未检测到明确的成功或失败信号，暂存PID并提示用户
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-          _redisProcessIds[server.id] = pid;
-        });
-
-        await NotificationService.showInfo(
-          title: '启动完成',
-          message: '${server.name} 启动命令已执行（进程ID: $pid）',
-        );
-      }
-    } catch (e, stackTrace) {
-      if (kDebugMode) {
-        print('[Redis启动失败] 发生异常: $e');
-        print('[Redis启动失败] 堆栈跟踪: $stackTrace');
-      }
-      await NotificationService.showError(
-        title: '启动失败',
-        message: '启动 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 静默停止Redis（不显示通知）
-  Future<void> _stopRedisSilently(Software server) async {
-    try {
-      int? processId = _redisProcessIds[server.id];
-
-      if (processId == null) {
-        final result = await Process.run('tasklist', [
-          '/FI',
-          'IMAGENAME eq redis-server.exe',
-          '/FO',
-          'CSV',
-          '/NH',
-        ], runInShell: true);
-
-        final output = result.stdout.toString();
-        if (output.isNotEmpty && output.contains('redis-server.exe')) {
-          final lines = output.split('\n');
-          for (final line in lines) {
-            if (line.contains('redis-server.exe')) {
-              final parts = line.split(',');
-              if (parts.length >= 2) {
-                final pidStr = parts[1].replaceAll('"', '').trim();
-                processId = int.tryParse(pidStr);
-                if (processId != null) break;
-              }
-            }
-          }
-        }
-      }
-
-      if (processId == null) {
-        _setServerRunningStatus(server.id, false);
-        _redisProcessIds.remove(server.id);
-        return;
-      }
-
-      await Process.run('taskkill', [
-        '/F',
-        '/T',
-        '/PID',
-        processId.toString(),
-      ], runInShell: true);
-
-      _setServerRunningStatus(server.id, false);
-      _redisProcessIds.remove(server.id);
-    } catch (e) {
-      if (kDebugMode) {
-        print('[静默停止Redis] 发生异常: $e');
-      }
-      _setServerRunningStatus(server.id, false);
-      _redisProcessIds.remove(server.id);
-    }
-  }
-
-  /// 停止Redis
-  Future<void> _stopRedis(Software server) async {
-    try {
-      int? processId = _redisProcessIds[server.id];
-
-      if (processId == null) {
-        // 尝试通过进程名查找
-        if (kDebugMode) {
-          print('[Redis停止] 未找到暂存的PID，尝试通过进程名查找');
-        }
-
-        final result = await Process.run('tasklist', [
-          '/FI',
-          'IMAGENAME eq redis-server.exe',
-          '/FO',
-          'CSV',
-          '/NH',
-        ], runInShell: true);
-
-        final output = result.stdout.toString();
-        if (output.isNotEmpty && output.contains('redis-server.exe')) {
-          // 解析PID（CSV格式："进程名","PID","会话名","会话#","内存使用"）
-          final lines = output.split('\n');
-          for (final line in lines) {
-            if (line.contains('redis-server.exe')) {
-              final parts = line.split(',');
-              if (parts.length >= 2) {
-                final pidStr = parts[1].replaceAll('"', '').trim();
-                processId = int.tryParse(pidStr);
-                if (processId != null) {
-                  if (kDebugMode) {
-                    print('[Redis停止] 通过进程名找到进程ID: $processId');
-                  }
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (processId == null) {
-        // 仍然找不到PID，可能进程已经停止
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _redisProcessIds.remove(server.id);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 进程可能已经停止',
-        );
-        return;
-      }
-
-      if (kDebugMode) {
-        print('[Redis停止] 正在停止进程ID: $processId');
-      }
-
-      // 使用 taskkill 结束进程树
-      final result = await Process.run('taskkill', [
-        '/F',
-        '/T',
-        '/PID',
-        processId.toString(),
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        if (kDebugMode) {
-          print('[Redis停止] 进程树已成功终止');
-        }
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _redisProcessIds.remove(server.id);
-        });
-
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
-      } else {
-        // 进程可能已经不存在
-        if (kDebugMode) {
-          print('[Redis停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
-        }
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _redisProcessIds.remove(server.id);
-        });
-
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 进程可能已经停止',
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[Redis停止失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '停止失败',
-        message: '停止 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 重启Redis
-  Future<void> _restartRedis(Software server) async {
-    // 先停止
-    await _stopRedis(server);
-    // 等待一小段时间
-    await Future.delayed(const Duration(milliseconds: 500));
-    // 再启动
-    await _startRedis(server);
-  }
-
-  /// 获取Rudis目录
-  Future<String?> _getRudisDirectory(String rudisId) async {
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) return null;
-
-    // Rudis可能在servers或databases目录下
-    final serversDir = Directory(path.join(storagePath, 'servers', rudisId));
-    final databasesDir = Directory(
-      path.join(storagePath, 'databases', rudisId),
-    );
-
-    if (await serversDir.exists()) {
-      return serversDir.path;
-    } else if (await databasesDir.exists()) {
-      return databasesDir.path;
-    }
-
-    return null;
-  }
-
-  /// 启动Rudis
-  Future<void> _startRudis(Software server) async {
-    try {
-      // 检查是否有暂存的PID，如果有则先停止旧进程
-      final existingPid = _rudisProcessIds[server.id];
-      if (existingPid != null) {
-        if (kDebugMode) {
-          print('[Rudis启动] 发现暂存的PID: $existingPid，先停止旧进程');
-        }
-        try {
-          await Process.run('taskkill', [
-            '/F',
-            '/T',
-            '/PID',
-            existingPid.toString(),
-          ], runInShell: true);
-        } catch (e) {
-          if (kDebugMode) {
-            print('[Rudis启动] 停止旧进程失败（可能进程已不存在）: $e');
-          }
-        }
-        // 清除暂存的PID
-        _rudisProcessIds.remove(server.id);
-      }
-
-      final rudisDir = await _getRudisDirectory(server.id);
-      if (rudisDir == null) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'Rudis未安装或目录不存在',
-        );
-        return;
-      }
-
-      final rudisServerExe = path.join(rudisDir, 'rudis-server.exe');
-      final rudisServerFile = File(rudisServerExe);
-      if (!await rudisServerFile.exists()) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '找不到rudis-server.exe文件: $rudisServerExe',
-        );
-        return;
-      }
-
-      final rudisConf = path.join(rudisDir, 'rudis.conf');
-      final rudisConfFile = File(rudisConf);
-      if (!await rudisConfFile.exists()) {
-        await NotificationService.showError(
-          title: '启动失败',
-          message: '找不到rudis.conf文件: $rudisConf',
-        );
-        return;
-      }
-
-      // 执行启动命令: rudis-server.exe --config .\rudis.conf
-      if (kDebugMode) {
-        print('[Rudis启动] 执行命令: $rudisServerExe --config .\\rudis.conf');
-      }
-
-      final process = await Process.start(
-        rudisServerExe,
-        ['--config', '.\\rudis.conf'],
-        workingDirectory: rudisDir,
-        mode: ProcessStartMode.normal,
-      );
-
-      // 记录进程ID
-      final pid = process.pid;
-      if (kDebugMode) {
-        print('[Rudis启动] 进程ID: $pid');
-      }
-
-      // 监听输出以判断启动是否成功
-      bool startupSuccess = false;
-      bool startupFailed = false;
-
-      // 消费 stdout
-      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
-        if (data.contains('Ready to accept connections')) {
-          startupSuccess = true;
-        }
-        if (data.contains('Failed to bind to address')) {
-          startupFailed = true;
-        }
-      });
-
-      // 消费 stderr（Rudis 的成功消息在 stderr 中输出）
-      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
-        if (kDebugMode) {
-          print('[Rudis启动] stderr: $data');
-        }
-        // 检查成功消息（在 stderr 中）
-        if (data.contains('Ready to accept connections')) {
-          startupSuccess = true;
-        }
-        // 检查失败消息
-        if (data.contains('Failed to bind to address')) {
-          startupFailed = true;
-        }
-      });
-
-      // 等待一段时间以便 Rudis 启动并输出日志
-      await Future.delayed(const Duration(seconds: 3));
-
-      if (startupSuccess) {
-        // 启动成功
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-          _rudisProcessIds[server.id] = pid;
-        });
-
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动（进程ID: $pid）',
-        );
-      } else if (startupFailed) {
-        // 启动失败
-        // 杀死进程
-        try {
-          await Process.run('taskkill', [
-            '/F',
-            '/T',
-            '/PID',
-            pid.toString(),
-          ], runInShell: true);
-        } catch (e) {
-          if (kDebugMode) {
-            print('[Rudis启动失败] 清理进程失败: $e');
-          }
-        }
-
-        await NotificationService.showError(
-          title: '启动失败',
-          message: 'Rudis启动失败: 端口被占用',
-        );
-      } else {
-        // 未检测到明确的成功或失败信号，暂存PID并提示用户
-        setState(() {
-          _setServerRunningStatus(server.id, true);
-          _rudisProcessIds[server.id] = pid;
-        });
-
-        await NotificationService.showInfo(
-          title: '启动完成',
-          message: '${server.name} 启动命令已执行（进程ID: $pid）',
-        );
-      }
-    } catch (e, stackTrace) {
-      if (kDebugMode) {
-        print('[Rudis启动失败] 发生异常: $e');
-        print('[Rudis启动失败] 堆栈跟踪: $stackTrace');
-      }
-      await NotificationService.showError(
-        title: '启动失败',
-        message: '启动 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 静默停止Rudis（不显示通知）
-  Future<void> _stopRudisSilently(Software server) async {
-    try {
-      int? processId = _rudisProcessIds[server.id];
-
-      if (processId == null) {
-        final result = await Process.run('tasklist', [
-          '/FI',
-          'IMAGENAME eq rudis-server.exe',
-          '/FO',
-          'CSV',
-          '/NH',
-        ], runInShell: true);
-
-        final output = result.stdout.toString();
-        if (output.isNotEmpty && output.contains('rudis-server.exe')) {
-          final lines = output.split('\n');
-          for (final line in lines) {
-            if (line.contains('rudis-server.exe')) {
-              final parts = line.split(',');
-              if (parts.length >= 2) {
-                final pidStr = parts[1].replaceAll('"', '').trim();
-                processId = int.tryParse(pidStr);
-                if (processId != null) break;
-              }
-            }
-          }
-        }
-      }
-
-      if (processId == null) {
-        _setServerRunningStatus(server.id, false);
-        _rudisProcessIds.remove(server.id);
-        return;
-      }
-
-      await Process.run('taskkill', [
-        '/F',
-        '/T',
-        '/PID',
-        processId.toString(),
-      ], runInShell: true);
-
-      _setServerRunningStatus(server.id, false);
-      _rudisProcessIds.remove(server.id);
-    } catch (e) {
-      if (kDebugMode) {
-        print('[静默停止Rudis] 发生异常: $e');
-      }
-      _setServerRunningStatus(server.id, false);
-      _rudisProcessIds.remove(server.id);
-    }
-  }
-
-  /// 停止Rudis
-  Future<void> _stopRudis(Software server) async {
-    try {
-      int? processId = _rudisProcessIds[server.id];
-
-      if (processId == null) {
-        // 尝试通过进程名查找
-        if (kDebugMode) {
-          print('[Rudis停止] 未找到暂存的PID，尝试通过进程名查找');
-        }
-
-        final result = await Process.run('tasklist', [
-          '/FI',
-          'IMAGENAME eq rudis-server.exe',
-          '/FO',
-          'CSV',
-          '/NH',
-        ], runInShell: true);
-
-        final output = result.stdout.toString();
-        if (output.isNotEmpty && output.contains('rudis-server.exe')) {
-          // 解析PID（CSV格式："进程名","PID","会话名","会话#","内存使用"）
-          final lines = output.split('\n');
-          for (final line in lines) {
-            if (line.contains('rudis-server.exe')) {
-              final parts = line.split(',');
-              if (parts.length >= 2) {
-                final pidStr = parts[1].replaceAll('"', '').trim();
-                processId = int.tryParse(pidStr);
-                if (processId != null) {
-                  if (kDebugMode) {
-                    print('[Rudis停止] 通过进程名找到进程ID: $processId');
-                  }
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (processId == null) {
-        // 仍然找不到PID，可能进程已经停止
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _rudisProcessIds.remove(server.id);
-        });
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 进程可能已经停止',
-        );
-        return;
-      }
-
-      if (kDebugMode) {
-        print('[Rudis停止] 正在停止进程ID: $processId');
-      }
-
-      // 使用 taskkill 结束进程树
-      final result = await Process.run('taskkill', [
-        '/F',
-        '/T',
-        '/PID',
-        processId.toString(),
-      ], runInShell: true);
-
-      if (result.exitCode == 0) {
-        if (kDebugMode) {
-          print('[Rudis停止] 进程树已成功终止');
-        }
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _rudisProcessIds.remove(server.id);
-        });
-
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
-      } else {
-        // 进程可能已经不存在
-        if (kDebugMode) {
-          print('[Rudis停止] taskkill退出码: ${result.exitCode}，进程可能已不存在');
-        }
-        setState(() {
-          _setServerRunningStatus(server.id, false);
-          _rudisProcessIds.remove(server.id);
-        });
-
-        await NotificationService.showInfo(
-          title: '提示',
-          message: '${server.name} 进程可能已经停止',
-        );
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('[Rudis停止失败] 发生异常: $e');
-      }
-      await NotificationService.showError(
-        title: '停止失败',
-        message: '停止 ${server.name} 时发生错误: $e',
-      );
-    }
-  }
-
-  /// 重启Rudis
-  Future<void> _restartRudis(Software server) async {
-    // 先停止
-    await _stopRudis(server);
-    // 等待一小段时间
-    await Future.delayed(const Duration(milliseconds: 500));
-    // 再启动
-    await _startRudis(server);
   }
 
   /// 生成SSL自签证书
