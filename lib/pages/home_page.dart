@@ -9,6 +9,7 @@ import '../services/config_service.dart';
 import '../services/software_source_service.dart';
 import '../services/notification_service.dart';
 import '../services/icon_service.dart';
+import '../services/tool_launcher_service.dart';
 import '../widgets/storage_path_dialog.dart';
 import '../models/software_model.dart';
 import '../utils/software_helper.dart';
@@ -399,14 +400,32 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {
-            // TODO: 实现启动逻辑
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('启动 ${tool.name}（功能待实现）'),
-                duration: const Duration(seconds: 2),
-              ),
-            );
+          onTap: () async {
+            // 启动工具
+            final result = await ToolLauncherService.launchTool(tool);
+            if (!result.$1) {
+              // 启动失败，显示错误提示
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(result.$2 ?? '启动 ${tool.name} 失败'),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            } else if (result.$2 == 'WINDOW_ALREADY_RUNNING') {
+              // 窗口已运行，显示提示信息
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${tool.name} 已在运行'),
+                    backgroundColor: Colors.blue,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            }
           },
           borderRadius: BorderRadius.circular(16),
           child: Container(
