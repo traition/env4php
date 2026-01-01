@@ -13,6 +13,7 @@ import '../services/tool_launcher_service.dart';
 import '../widgets/storage_path_dialog.dart';
 import '../models/software_model.dart';
 import '../utils/software_helper.dart';
+import '../services/storage_monitor_service.dart';
 import 'console_page.dart';
 import 'software_management_page.dart';
 import 'settings_page.dart';
@@ -89,6 +90,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _checkRouteAndUpdateTitleBar();
       _loadInstalledTools();
     });
+    
+    // 注册存储目录变更监听器
+    StorageMonitorService().addChangeListener(_onStorageChanged);
   }
 
   @override
@@ -99,7 +103,17 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (consoleState != null) {
       consoleState.stopAllServersOnClose();
     }
+    // 移除存储目录变更监听器
+    StorageMonitorService().removeChangeListener(_onStorageChanged);
     super.dispose();
+  }
+
+  /// 存储目录变更回调
+  void _onStorageChanged() {
+    if (mounted) {
+      // 重新加载工具栏工具列表
+      _loadInstalledTools();
+    }
   }
 
   @override
@@ -197,6 +211,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         if (path != null && path.isNotEmpty) {
           await ConfigService.setStoragePath(path);
           await ConfigService.initializeStorageDirectories(path);
+          // 重新启动存储目录监控
+          await StorageMonitorService().startMonitoring();
         }
       }
     } else if (isStorageSet) {

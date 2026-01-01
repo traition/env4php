@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import '../services/config_service.dart';
 import '../services/software_source_service.dart';
+import '../services/storage_monitor_service.dart';
 import '../widgets/storage_path_dialog.dart';
 
 /// 设置页面
@@ -52,6 +53,8 @@ class _SettingsPageState extends State<SettingsPage> {
     if (newPath != null && newPath.isNotEmpty) {
       // 保存新路径
       await ConfigService.setStoragePath(newPath);
+      // 重新启动存储目录监控
+      await StorageMonitorService().startMonitoring();
       // 初始化目录结构
       await ConfigService.initializeStorageDirectories(newPath);
       // 重新加载

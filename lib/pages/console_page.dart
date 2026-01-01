@@ -18,6 +18,7 @@ import '../services/software_managers/php_manager.dart';
 import '../services/software_managers/redis_manager.dart';
 import '../services/software_managers/rudis_manager.dart';
 import '../services/service_status_checker.dart';
+import '../services/storage_monitor_service.dart';
 import 'nginx_config_page.dart';
 
 /// 控制台页面
@@ -32,7 +33,7 @@ class ConsolePage extends StatefulWidget {
   State<ConsolePage> createState() => _ConsolePageState();
 }
 
-/// 项目信息模型
+/// 项目信息模型（兼容 NginxProjectInfo）
 class _ProjectInfo {
   final String name; // server_name:port格式
   final String confFilePath; // 配置文件路径
@@ -51,6 +52,19 @@ class _ProjectInfo {
     this.lastStartedAt,
     this.isFromSharedPreferences = false,
   });
+
+  /// 从 NginxProjectInfo 创建
+  factory _ProjectInfo.fromNginxProjectInfo(NginxProjectInfo info) {
+    return _ProjectInfo(
+      name: info.name,
+      confFilePath: info.confFilePath,
+      serverName: info.serverName,
+      ports: info.ports,
+      createdAt: info.createdAt,
+      lastStartedAt: info.lastStartedAt,
+      isFromSharedPreferences: info.isFromSharedPreferences,
+    );
+  }
 }
 
 class _ConsolePageState extends State<ConsolePage> {
@@ -80,6 +94,25 @@ class _ConsolePageState extends State<ConsolePage> {
     _loadServerRunningStatus();
     // 应用启动时检查所有服务的实际状态
     _checkAllServicesActualStatus();
+
+    // 注册存储目录变更监听器
+    StorageMonitorService().addChangeListener(_onStorageChanged);
+  }
+
+  @override
+  void dispose() {
+    // 移除存储目录变更监听器
+    StorageMonitorService().removeChangeListener(_onStorageChanged);
+    super.dispose();
+  }
+
+  /// 存储目录变更回调
+  void _onStorageChanged() {
+    if (mounted) {
+      // 重新加载服务器列表和项目列表
+      _loadInstalledServers();
+      _loadProjects();
+    }
   }
 
   @override
@@ -1198,131 +1231,38 @@ class _ConsolePageState extends State<ConsolePage> {
     );
   }
 
-  /// 检查nginx是否已安装
+  /// 检查nginx是否已安装（使用 NginxProjectHelper）
   Future<String?> _getNginxDirectory() async {
-    final softwareSource = await SoftwareSourceService.getSource();
-    if (softwareSource == null) return null;
-
-    // 查找nginx软件
-    final nginx = softwareSource.servers.firstWhere(
-      (s) => s.cate4?.toLowerCase() == 'nginx',
-      orElse: () => Software(
-        id: '',
-        name: '',
-        byte: 0,
-        downloadURL: '',
-        commands: [],
-        attachments: [],
-      ),
-    );
-
-    if (nginx.id.isEmpty) return null;
-
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) return null;
-
-    final nginxDir = Directory('$storagePath/servers/${nginx.id}');
-    if (!await nginxDir.exists()) return null;
-
-    return nginxDir.path;
+    return await NginxProjectHelper.getNginxDirectory();
   }
 
-  /// 检查nginx是否正在运行
+  /// 检查nginx是否正在运行（使用 NginxProjectHelper）
   Future<bool> _isNginxRunning() async {
-    final softwareSource = await SoftwareSourceService.getSource();
-    if (softwareSource == null) return false;
-
-    // 查找nginx软件
-    final nginx = softwareSource.servers.firstWhere(
-      (s) => s.cate4?.toLowerCase() == 'nginx',
-      orElse: () => Software(
-        id: '',
-        name: '',
-        byte: 0,
-        downloadURL: '',
-        commands: [],
-        attachments: [],
-      ),
-    );
-
-    if (nginx.id.isEmpty) return false;
-
-    // 检查运行状态
-    return _serverRunningStatus[nginx.id] ?? false;
+    return await NginxProjectHelper.isNginxRunning(_serverRunningStatus);
   }
 
-  /// 重新加载nginx配置
+  /// 重新加载nginx配置（使用 NginxProjectHelper）
   Future<void> _reloadNginx() async {
-    try {
-      final nginxDir = await _getNginxDirectory();
-      if (nginxDir == null) {
-        return; // nginx未安装，无需reload
-      }
+    final nginxDir = await _getNginxDirectory();
+    if (nginxDir == null) {
+      return; // nginx未安装，无需reload
+    }
 
-      final nginxExe = path.join(nginxDir, 'nginx.exe');
-      final nginxFile = File(nginxExe);
-      if (!await nginxFile.exists()) {
-        return; // nginx.exe不存在，无需reload
-      }
-
-      // 执行reload命令: nginx目录\nginx -s reload
-      final result = await Process.run(
-        nginxExe,
-        ['-s', 'reload'],
-        runInShell: true,
-        workingDirectory: nginxDir,
+    final success = await NginxProjectHelper.reloadNginx(nginxDir);
+    if (!success) {
+      await NotificationService.showError(
+        title: '重新加载配置失败',
+        message: 'nginx配置重新加载失败',
       );
-
-      if (result.exitCode != 0) {
-        await NotificationService.showError(
-          title: '重新加载配置失败',
-          message: 'nginx配置重新加载失败: ${result.stderr}',
-        );
-      }
-    } catch (e) {
-      // 静默处理错误，不影响项目创建流程
-      if (kDebugMode) {
-        print('重新加载nginx配置时发生错误: $e');
-      }
     }
   }
 
-  /// 检查nginx配置是否正确
+  /// 检查nginx配置是否正确（使用 NginxProjectHelper）
   /// 返回 (是否成功, 输出内容)
   Future<({bool success, String output})> _checkNginxConfig(
     String nginxDir,
   ) async {
-    try {
-      final nginxExe = path.join(nginxDir, 'nginx.exe');
-      final nginxFile = File(nginxExe);
-      if (!await nginxFile.exists()) {
-        final errorMsg = '找不到nginx.exe文件: $nginxExe';
-        return (success: false, output: errorMsg);
-      }
-
-      // 执行 nginx -t 命令
-      final result = await Process.run(
-        nginxExe,
-        ['-t'],
-        runInShell: true,
-        workingDirectory: nginxDir,
-      );
-
-      // 获取输出（合并stdout和stderr）
-      final output = '${result.stdout}${result.stderr}';
-
-      // 检查输出是否以 "test is successful" 结尾（不区分大小写）
-      final normalizedOutput = output.trim().toLowerCase();
-      if (normalizedOutput.endsWith('test is successful')) {
-        return (success: true, output: output);
-      } else {
-        // 配置检查失败
-        return (success: false, output: output);
-      }
-    } catch (e) {
-      final errorMsg = '执行nginx配置检查时发生错误: $e';
-      return (success: false, output: errorMsg);
-    }
+    return await NginxProjectHelper.checkNginxConfig(nginxDir);
   }
 
   /// 显示nginx配置检查失败的对话框
@@ -1385,122 +1325,13 @@ class _ConsolePageState extends State<ConsolePage> {
     );
   }
 
-  /// 解析nginx配置文件，提取server_name和listen
+  /// 解析nginx配置文件，提取server_name和listen（使用 NginxProjectHelper）
   Future<List<_ProjectInfo>> _parseNginxConfigs(String nginxDir) async {
-    final List<_ProjectInfo> projects = [];
-    final servsDir = Directory(path.join(nginxDir, 'servs'));
-
-    if (!await servsDir.exists()) {
-      return projects;
-    }
-
-    // 遍历servs目录下的所有conf文件
-    await for (final entity in servsDir.list()) {
-      if (entity is File && entity.path.endsWith('.conf')) {
-        try {
-          final content = await entity.readAsString();
-          final projectInfos = await _parseNginxConfig(content, entity.path);
-          projects.addAll(projectInfos);
-        } catch (e) {
-          // 忽略解析失败的文件
-          continue;
-        }
-      }
-    }
-
-    return projects;
-  }
-
-  /// 解析单个nginx配置文件内容
-  Future<List<_ProjectInfo>> _parseNginxConfig(
-    String content,
-    String filePath,
-  ) async {
-    final List<_ProjectInfo> projects = [];
-
-    // 使用正则表达式匹配server块
-    final serverBlockPattern = RegExp(
-      r'server\s*\{[^}]*\}',
-      multiLine: true,
-      dotAll: true,
-    );
-
-    final matches = serverBlockPattern.allMatches(content);
-
-    for (final match in matches) {
-      final serverBlock = match.group(0) ?? '';
-
-      // 提取server_name
-      final serverNamePattern = RegExp(r'server_name\s+([^;]+);');
-      final serverNameMatch = serverNamePattern.firstMatch(serverBlock);
-      if (serverNameMatch == null) continue;
-
-      String serverName = serverNameMatch.group(1)?.trim() ?? '';
-      // 去掉引号
-      serverName = serverName.replaceAll(RegExp(r'''["']'''), '');
-      // 去掉结尾的'.localhost'
-      if (serverName.endsWith('.localhost')) {
-        serverName = serverName.substring(0, serverName.length - 10);
-      }
-
-      // 提取listen（忽略注释）
-      final listenPattern = RegExp(r'^\s*listen\s+([^;#]+);', multiLine: true);
-      final listenMatches = listenPattern.allMatches(serverBlock);
-
-      final List<String> ports = [];
-      for (final listenMatch in listenMatches) {
-        String listenValue = listenMatch.group(1)?.trim() ?? '';
-        // 提取端口号（可能是 "80" 或 "127.0.0.1:80" 格式）
-        final portMatch = RegExp(r':?(\d+)$').firstMatch(listenValue);
-        if (portMatch != null) {
-          ports.add(portMatch.group(1)!);
-        } else if (RegExp(r'^\d+$').hasMatch(listenValue)) {
-          // 如果直接是端口号
-          ports.add(listenValue);
-        }
-      }
-
-      if (ports.isEmpty) continue;
-
-      // 组合端口（多个用|分隔）
-      final portsStr = ports.join('|');
-
-      // 组合名称：server_name:port
-      final projectName = '$serverName:$portsStr';
-
-      // 获取文件创建时间
-      final file = File(filePath);
-      DateTime? createdAt;
-      DateTime? lastStartedAt;
-      if (await file.exists()) {
-        final stat = await file.stat();
-        createdAt = stat.modified;
-        // 尝试从shared_preferences读取最后启动时间
-        final prefs = await SharedPreferences.getInstance();
-        final lastStartedKey = 'project_${projectName}_last_started';
-        final lastStartedStr = prefs.getString(lastStartedKey);
-        if (lastStartedStr != null) {
-          try {
-            lastStartedAt = DateTime.parse(lastStartedStr);
-          } catch (e) {
-            // 解析失败，忽略
-          }
-        }
-      }
-
-      projects.add(
-        _ProjectInfo(
-          name: projectName,
-          confFilePath: filePath,
-          serverName: serverName,
-          ports: portsStr,
-          createdAt: createdAt,
-          lastStartedAt: lastStartedAt,
-        ),
-      );
-    }
-
-    return projects;
+    final nginxProjects = await NginxProjectHelper.parseNginxConfigs(nginxDir);
+    // 转换为 _ProjectInfo
+    return nginxProjects
+        .map((info) => _ProjectInfo.fromNginxProjectInfo(info))
+        .toList();
   }
 
   /// 加载项目列表

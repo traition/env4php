@@ -12,6 +12,7 @@ import '../services/icon_service.dart';
 import '../utils/software_menu_helper.dart';
 import '../widgets/storage_path_dialog.dart';
 import '../utils/software_helper.dart';
+import '../services/storage_monitor_service.dart';
 
 /// 软件管理页面
 class SoftwareManagementPage extends StatefulWidget {
@@ -141,6 +142,24 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initialize();
     });
+    
+    // 注册存储目录变更监听器
+    StorageMonitorService().addChangeListener(_onStorageChanged);
+  }
+
+  @override
+  void dispose() {
+    // 移除存储目录变更监听器
+    StorageMonitorService().removeChangeListener(_onStorageChanged);
+    super.dispose();
+  }
+
+  /// 存储目录变更回调
+  void _onStorageChanged() {
+    if (mounted) {
+      // 重新刷新已安装软件列表
+      _refreshInstalledSoftware();
+    }
   }
 
   Future<void> _initialize() async {
@@ -158,6 +177,8 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
         if (path != null && path.isNotEmpty) {
           await ConfigService.setStoragePath(path);
           await ConfigService.initializeStorageDirectories(path);
+          // 重新启动存储目录监控
+          await StorageMonitorService().startMonitoring();
         } else {
           // 用户取消了设置，可以显示提示
           if (mounted) {

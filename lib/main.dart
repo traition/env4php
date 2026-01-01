@@ -3,11 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'pages/home_page.dart';
 import 'services/notification_service.dart';
+import 'services/storage_monitor_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
   await NotificationService.initialize();
+
+  // 启动存储目录监控
+  await StorageMonitorService().startMonitoring();
 
   const defaultSize = Size(1280, 720);
   final windowSize = Size(defaultSize.width * 0.7, defaultSize.height * 0.8);

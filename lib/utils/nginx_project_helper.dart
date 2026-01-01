@@ -1,8 +1,12 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/hosts_service.dart';
 import '../services/notification_service.dart';
+import '../services/config_service.dart';
+import '../services/software_source_service.dart';
+import '../models/software_model.dart';
 
 /// Nginx项目配置数据类
 class NginxProjectConfig {
@@ -23,19 +27,40 @@ class NginxProjectConfig {
   });
 }
 
+/// Nginx项目信息数据类
+class NginxProjectInfo {
+  final String name; // server_name:port格式
+  final String confFilePath; // 配置文件路径
+  final String serverName; // server_name值
+  final String ports; // 端口（多个用|分隔）
+  final DateTime? createdAt; // 创建时间
+  final DateTime? lastStartedAt; // 最后启动时间
+  final bool isFromSharedPreferences; // 是否来自shared_preferences
+
+  NginxProjectInfo({
+    required this.name,
+    required this.confFilePath,
+    required this.serverName,
+    required this.ports,
+    this.createdAt,
+    this.lastStartedAt,
+    this.isFromSharedPreferences = false,
+  });
+}
+
 /// Nginx项目创建辅助类
 class NginxProjectHelper {
   /// 准备nginx项目的基础环境
   /// 返回 (nginxDir, servsDir, projectConfFile, lines) 或 null
-  static Future<({
-    String nginxDir,
-    Directory servsDir,
-    File projectConfFile,
-    List<String> lines,
-  })?> prepareNginxProjectEnvironment(
-    String projectName,
-    String nginxDir,
-  ) async {
+  static Future<
+    ({
+      String nginxDir,
+      Directory servsDir,
+      File projectConfFile,
+      List<String> lines,
+    })?
+  >
+  prepareNginxProjectEnvironment(String projectName, String nginxDir) async {
     try {
       final servsDir = Directory(path.join(nginxDir, 'servs'));
       if (!await servsDir.exists()) {
@@ -76,10 +101,7 @@ class NginxProjectHelper {
   /// 修改nginx配置文件的端口
   static void updatePort(List<String> lines, String port) {
     if (lines.length >= 2) {
-      lines[1] = lines[1].replaceAll(
-        RegExp(r'listen\s+\d+'),
-        'listen $port',
-      );
+      lines[1] = lines[1].replaceAll(RegExp(r'listen\s+\d+'), 'listen $port');
     }
   }
 
@@ -200,9 +222,7 @@ class NginxProjectHelper {
     String nginxDir,
     Directory servsDir,
   ) async {
-    final subconfFile = File(
-      path.join(servsDir.path, '$projectName.subconf'),
-    );
+    final subconfFile = File(path.join(servsDir.path, '$projectName.subconf'));
 
     if (framework == 'other' &&
         (nginxConfig['customRules'] as String?)?.isEmpty != false) {
@@ -256,9 +276,7 @@ class NginxProjectHelper {
     String nginxDir,
     Directory servsDir,
   ) async {
-    final subconfFile = File(
-      path.join(servsDir.path, '$projectName.subconf'),
-    );
+    final subconfFile = File(path.join(servsDir.path, '$projectName.subconf'));
 
     if (rewriteRule != null && rewriteRule.isNotEmpty) {
       final rewriteConfFile = File(
@@ -281,9 +299,7 @@ class NginxProjectHelper {
     String? customRules,
     Directory servsDir,
   ) async {
-    final subconfFile = File(
-      path.join(servsDir.path, '$projectName.subconf'),
-    );
+    final subconfFile = File(path.join(servsDir.path, '$projectName.subconf'));
     await subconfFile.writeAsString(customRules ?? '');
   }
 
@@ -312,7 +328,7 @@ class NginxProjectHelper {
     String projectName,
     String serverName,
     Future<({bool success, String output})> Function(String nginxDir)
-        checkNginxConfig,
+    checkNginxConfig,
     Future<void> Function(String output) showNginxConfigErrorDialog,
     Future<bool> Function() isNginxRunning,
     Future<void> Function() reloadNginx,
@@ -345,10 +361,7 @@ class NginxProjectHelper {
 
       return true;
     } catch (e) {
-      await NotificationService.showError(
-        title: '创建失败',
-        message: '创建项目失败: $e',
-      );
+      await NotificationService.showError(title: '创建失败', message: '创建项目失败: $e');
       return false;
     }
   }
@@ -421,5 +434,243 @@ class NginxProjectHelper {
       return (success: false, output: errorMsg);
     }
   }
-}
 
+  /// 获取nginx安装目录
+  /// 返回nginx目录路径，如果未安装返回null
+  static Future<String?> getNginxDirectory() async {
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) return null;
+
+    // 查找nginx软件
+    Software? nginx;
+    try {
+      nginx = softwareSource.servers.firstWhere(
+        (s) => s.cate4?.toLowerCase() == 'nginx',
+      );
+    } catch (e) {
+      try {
+        nginx = softwareSource.servers.firstWhere(
+          (s) => s.id.toLowerCase() == 'nginx',
+        );
+      } catch (e) {
+        // 未找到nginx
+      }
+    }
+
+    if (nginx == null) return null;
+
+    final storagePath = await ConfigService.getStoragePath();
+    if (storagePath == null) return null;
+
+    // 检查 servers 目录
+    final serversDir = Directory('$storagePath/servers/${nginx.id}');
+    if (await serversDir.exists()) {
+      return serversDir.path;
+    }
+
+    // 检查 databases 目录（某些情况下nginx可能在databases分类）
+    final databasesDir = Directory('$storagePath/databases/${nginx.id}');
+    if (await databasesDir.exists()) {
+      return databasesDir.path;
+    }
+
+    return null;
+  }
+
+  /// 检查nginx是否正在运行
+  /// [serverRunningStatus] 服务器运行状态映射
+  /// 返回是否正在运行
+  static Future<bool> isNginxRunning(
+    Map<String, bool> serverRunningStatus,
+  ) async {
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) return false;
+
+    // 查找nginx软件
+    Software? nginx;
+    try {
+      nginx = softwareSource.servers.firstWhere(
+        (s) => s.cate4?.toLowerCase() == 'nginx',
+      );
+    } catch (e) {
+      try {
+        nginx = softwareSource.servers.firstWhere(
+          (s) => s.id.toLowerCase() == 'nginx',
+        );
+      } catch (e) {
+        // 未找到nginx
+      }
+    }
+
+    if (nginx == null) return false;
+
+    // 检查运行状态
+    return serverRunningStatus[nginx.id] ?? false;
+  }
+
+  /// 重新加载nginx配置
+  /// [nginxDir] nginx安装目录
+  /// 返回是否成功
+  static Future<bool> reloadNginx(String nginxDir) async {
+    try {
+      final nginxExe = path.join(nginxDir, 'nginx.exe');
+      final nginxFile = File(nginxExe);
+      if (!await nginxFile.exists()) {
+        if (kDebugMode) {
+          print('nginx.exe不存在: $nginxExe');
+        }
+        return false;
+      }
+
+      // 执行reload命令: nginx目录\nginx -s reload
+      final result = await Process.run(
+        nginxExe,
+        ['-s', 'reload'],
+        runInShell: true,
+        workingDirectory: nginxDir,
+      );
+
+      if (result.exitCode != 0) {
+        if (kDebugMode) {
+          print('nginx配置重新加载失败: ${result.stderr}');
+        }
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      if (kDebugMode) {
+        print('重新加载nginx配置时发生错误: $e');
+      }
+      return false;
+    }
+  }
+
+  /// 解析nginx配置文件，提取server_name和listen
+  /// [nginxDir] nginx安装目录
+  /// 返回项目信息列表
+  static Future<List<NginxProjectInfo>> parseNginxConfigs(
+    String nginxDir,
+  ) async {
+    final List<NginxProjectInfo> projects = [];
+    final servsDir = Directory(path.join(nginxDir, 'servs'));
+
+    if (!await servsDir.exists()) {
+      return projects;
+    }
+
+    // 遍历servs目录下的所有conf文件
+    await for (final entity in servsDir.list()) {
+      if (entity is File && entity.path.endsWith('.conf')) {
+        try {
+          final content = await entity.readAsString();
+          final projectInfos = await parseNginxConfig(content, entity.path);
+          projects.addAll(projectInfos);
+        } catch (e) {
+          if (kDebugMode) {
+            print('解析nginx配置文件失败: ${entity.path}, 错误: $e');
+          }
+          // 忽略解析失败的文件
+          continue;
+        }
+      }
+    }
+
+    return projects;
+  }
+
+  /// 解析单个nginx配置文件内容
+  /// [content] 配置文件内容
+  /// [filePath] 配置文件路径
+  /// 返回项目信息列表
+  static Future<List<NginxProjectInfo>> parseNginxConfig(
+    String content,
+    String filePath,
+  ) async {
+    final List<NginxProjectInfo> projects = [];
+
+    // 使用正则表达式匹配server块
+    final serverBlockPattern = RegExp(
+      r'server\s*\{[^}]*\}',
+      multiLine: true,
+      dotAll: true,
+    );
+
+    final matches = serverBlockPattern.allMatches(content);
+
+    for (final match in matches) {
+      final serverBlock = match.group(0) ?? '';
+
+      // 提取server_name
+      final serverNamePattern = RegExp(r'server_name\s+([^;]+);');
+      final serverNameMatch = serverNamePattern.firstMatch(serverBlock);
+      if (serverNameMatch == null) continue;
+
+      String serverName = serverNameMatch.group(1)?.trim() ?? '';
+      // 去掉引号
+      serverName = serverName.replaceAll(RegExp(r'''["']'''), '');
+      // 去掉结尾的'.localhost'
+      if (serverName.endsWith('.localhost')) {
+        serverName = serverName.substring(0, serverName.length - 10);
+      }
+
+      // 提取listen（忽略注释）
+      final listenPattern = RegExp(r'^\s*listen\s+([^;#]+);', multiLine: true);
+      final listenMatches = listenPattern.allMatches(serverBlock);
+
+      final List<String> ports = [];
+      for (final listenMatch in listenMatches) {
+        String listenValue = listenMatch.group(1)?.trim() ?? '';
+        // 提取端口号（可能是 "80" 或 "127.0.0.1:80" 格式）
+        final portMatch = RegExp(r':?(\d+)$').firstMatch(listenValue);
+        if (portMatch != null) {
+          ports.add(portMatch.group(1)!);
+        } else if (RegExp(r'^\d+$').hasMatch(listenValue)) {
+          // 如果直接是端口号
+          ports.add(listenValue);
+        }
+      }
+
+      if (ports.isEmpty) continue;
+
+      // 组合端口（多个用|分隔）
+      final portsStr = ports.join('|');
+
+      // 组合名称：server_name:port
+      final projectName = '$serverName:$portsStr';
+
+      // 获取文件创建时间
+      final file = File(filePath);
+      DateTime? createdAt;
+      DateTime? lastStartedAt;
+      if (await file.exists()) {
+        final stat = await file.stat();
+        createdAt = stat.modified;
+        // 尝试从shared_preferences读取最后启动时间
+        final prefs = await SharedPreferences.getInstance();
+        final lastStartedKey = 'project_${projectName}_last_started';
+        final lastStartedStr = prefs.getString(lastStartedKey);
+        if (lastStartedStr != null) {
+          try {
+            lastStartedAt = DateTime.parse(lastStartedStr);
+          } catch (e) {
+            // 解析失败，忽略
+          }
+        }
+      }
+
+      projects.add(
+        NginxProjectInfo(
+          name: projectName,
+          confFilePath: filePath,
+          serverName: serverName,
+          ports: portsStr,
+          createdAt: createdAt,
+          lastStartedAt: lastStartedAt,
+        ),
+      );
+    }
+
+    return projects;
+  }
+}
