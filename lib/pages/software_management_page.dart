@@ -11,6 +11,7 @@ import '../services/notification_service.dart';
 import '../services/icon_service.dart';
 import '../utils/software_menu_helper.dart';
 import '../widgets/storage_path_dialog.dart';
+import '../utils/software_helper.dart';
 
 /// 软件管理页面
 class SoftwareManagementPage extends StatefulWidget {
@@ -354,43 +355,6 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
     }
   }
 
-  /// 检查pgsql是否已安装
-  Future<bool> _isPgsqlInstalled() async {
-    if (_softwareSource == null) return false;
-
-    // 查找pgsql软件
-    final pgsql = _softwareSource!.databases.firstWhere(
-      (s) => s.cate4?.toLowerCase() == 'pgsql',
-      orElse: () => Software(
-        id: '',
-        name: '',
-        byte: 0,
-        downloadURL: '',
-        commands: [],
-        attachments: [],
-      ),
-    );
-
-    if (pgsql.id.isEmpty) return false;
-
-    // 检查pgsql是否已安装
-    return _installedSoftware.any((s) => s.id == pgsql.id);
-  }
-
-  /// 创建虚拟的pgAdmin4应用
-  Software _createPgAdmin4Software() {
-    return Software(
-      id: 'pgadmin4',
-      name: 'pgAdmin4',
-      description: 'PostgreSQL自带管理工具',
-      byte: 0,
-      downloadURL: '',
-      commands: [],
-      attachments: [],
-      cate4: 'pgadmin4',
-    );
-  }
-
   /// 获取当前显示的软件列表
   Future<List<Software>> _getCurrentSoftwareList() async {
     if (_softwareSource == null) return [];
@@ -400,9 +364,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
       case 0: // 已安装
         list = _installedSoftware;
         // 如果pgsql已安装，添加虚拟的pgAdmin4应用
-        final isPgsqlInstalled = await _isPgsqlInstalled();
+        final isPgsqlInstalled = await SoftwareHelper.isPgsqlInstalled(
+          softwareSource: _softwareSource,
+          installedSoftware: _installedSoftware,
+        );
         if (isPgsqlInstalled) {
-          list = [...list, _createPgAdmin4Software()];
+          list = [...list, SoftwareHelper.createPgAdmin4Software()];
         }
         break;
       case 1: // 服务器
@@ -417,9 +384,12 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
       case 4: // 工具
         list = _softwareSource!.tools;
         // 如果pgsql已安装，添加虚拟的pgAdmin4应用
-        final isPgsqlInstalled = await _isPgsqlInstalled();
+        final isPgsqlInstalled = await SoftwareHelper.isPgsqlInstalled(
+          softwareSource: _softwareSource,
+          installedSoftware: _installedSoftware,
+        );
         if (isPgsqlInstalled) {
-          list = [...list, _createPgAdmin4Software()];
+          list = [...list, SoftwareHelper.createPgAdmin4Software()];
         }
         break;
       default:
@@ -558,7 +528,10 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
   /// 获取图标文件路径
   /// 获取图标路径，使用 IconService 统一处理
   Future<String?> _getIconPath(Software software) async {
-    return await IconService.getIconPath(software, softwareSource: _softwareSource);
+    return await IconService.getIconPath(
+      software,
+      softwareSource: _softwareSource,
+    );
   }
 
   Widget _buildSoftwareCard(Software software) {
@@ -593,7 +566,10 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
           // 对于其他软件，根据tab页和已安装列表判断
           return FutureBuilder<bool>(
             future: isPgAdmin4
-                ? _isPgsqlInstalled()
+                ? SoftwareHelper.isPgsqlInstalled(
+                    softwareSource: _softwareSource,
+                    installedSoftware: _installedSoftware,
+                  )
                 : Future.value(
                     _selectedTabIndex == 0 ||
                         _installedSoftware.any((s) => s.id == software.id),
@@ -1111,10 +1087,7 @@ class _SoftwareManagementPageState extends State<SoftwareManagementPage> {
       builder: (context) => AlertDialog(
         title: Text('管理 ${software.name}'),
         content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: menuItems,
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: menuItems),
         ),
         actions: [
           TextButton(

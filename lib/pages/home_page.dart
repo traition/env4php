@@ -11,6 +11,7 @@ import '../services/notification_service.dart';
 import '../services/icon_service.dart';
 import '../widgets/storage_path_dialog.dart';
 import '../models/software_model.dart';
+import '../utils/software_helper.dart';
 import 'console_page.dart';
 import 'software_management_page.dart';
 import 'settings_page.dart';
@@ -139,12 +140,22 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       }
     }
 
+    // 检查pgsql是否已安装，如果已安装则添加虚拟的pgAdmin4
+    final isPgsqlInstalled = await SoftwareHelper.isPgsqlInstalled(
+      softwareSource: softwareSource,
+      storagePath: storagePath,
+    );
+    if (isPgsqlInstalled) {
+      installed.add(SoftwareHelper.createPgAdmin4Software());
+    }
+
     if (mounted) {
       setState(() {
         _installedTools = installed;
       });
     }
   }
+
 
   /// 检查当前路由并更新顶栏位置
   void _checkRouteAndUpdateTitleBar() {
