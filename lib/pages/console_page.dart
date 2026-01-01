@@ -17,6 +17,7 @@ import '../services/software_managers/software_manager_factory.dart';
 import '../services/software_managers/php_manager.dart';
 import '../services/software_managers/redis_manager.dart';
 import '../services/software_managers/rudis_manager.dart';
+import '../services/service_status_checker.dart';
 import 'nginx_config_page.dart';
 
 /// 控制台页面
@@ -77,6 +78,8 @@ class _ConsolePageState extends State<ConsolePage> {
     _loadInstalledServers();
     _loadProjects();
     _loadServerRunningStatus();
+    // 应用启动时检查所有服务的实际状态
+    _checkAllServicesActualStatus();
   }
 
   @override
@@ -203,6 +206,8 @@ class _ConsolePageState extends State<ConsolePage> {
       });
       // 加载已保存的服务运行状态（在服务器列表加载完成后）
       await _loadServerRunningStatus();
+      // 检查所有服务的实际状态（在服务器列表和保存的状态加载完成后）
+      await _checkAllServicesActualStatus();
     }
   }
 
@@ -248,6 +253,59 @@ class _ConsolePageState extends State<ConsolePage> {
     _serverRunningStatus[serverId] = isRunning;
     // 异步保存，不阻塞
     _saveServerRunningStatus(serverId, isRunning);
+  }
+
+  /// 检查所有服务的实际运行状态
+  /// 在应用启动时调用，用于同步实际状态和 shared_preferences 中的状态
+  Future<void> _checkAllServicesActualStatus() async {
+    try {
+      // 等待服务器列表加载完成
+      if (_installedServers.isEmpty) {
+        // 如果服务器列表为空，延迟一下再检查
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (_installedServers.isEmpty) {
+          return;
+        }
+      }
+
+      if (kDebugMode) {
+        print('[服务状态检查] 开始检查所有服务的实际状态...');
+      }
+
+      // 检查所有服务的实际状态
+      final actualStatusMap =
+          await ServiceStatusChecker.checkAllServicesStatus();
+
+      // 更新状态（如果实际状态与保存的状态不一致）
+      bool hasChanges = false;
+      for (final server in _installedServers) {
+        final actualStatus = actualStatusMap[server.id] ?? false;
+        final savedStatus = _serverRunningStatus[server.id] ?? false;
+
+        if (actualStatus != savedStatus) {
+          if (kDebugMode) {
+            print(
+              '[服务状态检查] ${server.name} 状态不一致: 保存=${savedStatus}, 实际=${actualStatus}',
+            );
+          }
+          _setServerRunningStatus(server.id, actualStatus);
+          hasChanges = true;
+        }
+      }
+
+      // 如果有变化，更新 UI
+      if (hasChanges && mounted) {
+        setState(() {});
+      }
+
+      if (kDebugMode) {
+        print('[服务状态检查] 检查完成，已更新 ${hasChanges ? "部分" : "无"}服务状态');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[服务状态检查] 检查服务状态时发生错误: $e');
+      }
+    }
   }
 
   /// 全部启动服务器
