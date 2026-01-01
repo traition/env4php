@@ -7,7 +7,8 @@ import 'config_service.dart';
 /// 存储目录监控服务
 /// 监控存储目录下的 databases、php、servers、tools 目录的子目录变更
 class StorageMonitorService {
-  static final StorageMonitorService _instance = StorageMonitorService._internal();
+  static final StorageMonitorService _instance =
+      StorageMonitorService._internal();
   factory StorageMonitorService() => _instance;
   StorageMonitorService._internal();
 
@@ -15,6 +16,7 @@ class StorageMonitorService {
   StreamSubscription<FileSystemEvent>? _phpSubscription;
   StreamSubscription<FileSystemEvent>? _serversSubscription;
   StreamSubscription<FileSystemEvent>? _toolsSubscription;
+  StreamSubscription<FileSystemEvent>? _sourcesSubscription;
 
   final List<Function()> _listeners = [];
 
@@ -55,7 +57,7 @@ class StorageMonitorService {
     // 停止现有监控
     await stopMonitoring();
 
-    // 监控的目录列表
+    // 监控的目录列表（不包含 sources，sources 由设置页面单独监控）
     final directories = [
       ('databases', path.join(storagePath, 'databases')),
       ('php', path.join(storagePath, 'php')),
@@ -100,6 +102,9 @@ class StorageMonitorService {
           case 'tools':
             _toolsSubscription = subscription;
             break;
+          case 'sources':
+            _sourcesSubscription = subscription;
+            break;
         }
 
         if (kDebugMode) {
@@ -127,6 +132,85 @@ class StorageMonitorService {
 
     if (kDebugMode) {
       print('[存储监控] 已停止所有监控');
+    }
+  }
+
+  /// 开始监控 sources 目录（用于设置页面）
+  Future<void> startSourcesMonitoring(Function() onChanged) async {
+    final storagePath = await ConfigService.getStoragePath();
+    if (storagePath == null) {
+      if (kDebugMode) {
+        print('[存储监控] 存储目录未设置，无法监控 sources 目录');
+      }
+      return;
+    }
+
+    // 停止现有的 sources 监控
+    await stopSourcesMonitoring();
+
+    try {
+      final sourcesDir = Directory(path.join(storagePath, 'sources'));
+      if (!await sourcesDir.exists()) {
+        await sourcesDir.create(recursive: true);
+      }
+
+      // 开始监控目录（递归监控，包括文件和子目录）
+      final stream = sourcesDir.watch(recursive: true);
+      _sourcesSubscription = stream.listen(
+        (event) {
+          _handleSourcesFileSystemEvent(event, onChanged);
+        },
+        onError: (error) {
+          if (kDebugMode) {
+            print('[存储监控] 监控 sources 目录时发生错误: $error');
+          }
+        },
+      );
+
+      if (kDebugMode) {
+        print('[存储监控] 开始监控 sources 目录: ${sourcesDir.path}');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[存储监控] 监控 sources 目录失败: $e');
+      }
+    }
+  }
+
+  /// 停止监控 sources 目录
+  Future<void> stopSourcesMonitoring() async {
+    await _sourcesSubscription?.cancel();
+    _sourcesSubscription = null;
+
+    if (kDebugMode) {
+      print('[存储监控] 已停止 sources 目录监控');
+    }
+  }
+
+  /// 处理 sources 目录的文件系统事件（监控文件和目录）
+  void _handleSourcesFileSystemEvent(
+    FileSystemEvent event,
+    Function() onChanged,
+  ) {
+    // 处理所有类型的事件（包括文件创建、删除、修改）
+    if (event.type == FileSystemEvent.create ||
+        event.type == FileSystemEvent.delete ||
+        event.type == FileSystemEvent.modify) {
+      // 延迟处理，避免频繁触发
+      Future.delayed(const Duration(milliseconds: 500), () {
+        try {
+          if (kDebugMode) {
+            print(
+              '[存储监控] 检测到 sources 目录变更: ${event.type} - ${path.basename(event.path)}',
+            );
+          }
+          onChanged();
+        } catch (e) {
+          if (kDebugMode) {
+            print('[存储监控] 处理 sources 文件系统事件时发生错误: $e');
+          }
+        }
+      });
     }
   }
 
@@ -159,9 +243,7 @@ class StorageMonitorService {
           } else if (event.type == FileSystemEvent.delete) {
             // 删除事件，直接通知
             if (kDebugMode) {
-              print(
-                '[存储监控] 检测到 $category 目录删除: ${path.basename(entity)}',
-              );
+              print('[存储监控] 检测到 $category 目录删除: ${path.basename(entity)}');
             }
             _notifyListeners();
           }
@@ -174,4 +256,3 @@ class StorageMonitorService {
     }
   }
 }
-
