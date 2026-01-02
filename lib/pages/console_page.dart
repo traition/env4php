@@ -463,6 +463,24 @@ class _ConsolePageState extends State<ConsolePage> {
       // 并行执行所有停止任务
       await Future.wait(stopTasks);
     }
+
+    // 确保所有服务状态都已保存到 shared_preferences
+    await _saveAllServerRunningStatus();
+  }
+
+  /// 保存所有服务的运行状态到 shared_preferences
+  Future<void> _saveAllServerRunningStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // 遍历所有服务的运行状态并保存
+      for (final entry in _serverRunningStatus.entries) {
+        await prefs.setBool('server_running_status_${entry.key}', entry.value);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('保存所有服务运行状态失败: $e');
+      }
+    }
   }
 
   /// 全部停止服务器
@@ -2094,12 +2112,21 @@ class _ConsolePageState extends State<ConsolePage> {
     }
   }
 
-  /// 重启项目（占位函数）
-  void _restartProject(_ProjectInfo project) {
-    NotificationService.showInfo(
-      title: '提示',
-      message: '重启 ${project.name}（功能待实现）',
-    );
+  /// 重启项目
+  Future<void> _restartProject(_ProjectInfo project) async {
+    try {
+      // 先停止项目
+      await _stopProject(project);
+      // 等待一小段时间确保服务完全停止
+      await Future.delayed(const Duration(milliseconds: 500));
+      // 再启动项目
+      await _startProject(project);
+    } catch (e) {
+      await NotificationService.showError(
+        title: '重启失败',
+        message: '重启项目 ${project.name} 时发生错误: $e',
+      );
+    }
   }
 
   /// 打开项目（占位函数）

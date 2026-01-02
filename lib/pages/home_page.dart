@@ -118,13 +118,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.detached) {
-      // 应用即将关闭，停止所有服务
-      final consoleState = ConsolePage.globalKey.currentState;
-      if (consoleState != null) {
-        consoleState.stopAllServersOnClose();
-      }
-    }
+    // 窗口关闭事件由 window_manager 的 onWindowClose 处理
   }
 
   /// 加载已安装的tools应用

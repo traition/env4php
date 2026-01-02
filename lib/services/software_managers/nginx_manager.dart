@@ -77,10 +77,7 @@ class NginxManager extends SoftwareManager {
         mode: ProcessStartMode.detached,
       );
 
-      await NotificationService.showSuccess(
-        title: '启动成功',
-        message: '${server.name} 已启动',
-      );
+      // 成功时无需提示用户
       return (true, null);
     } catch (e) {
       await NotificationService.showError(
@@ -151,10 +148,7 @@ class NginxManager extends SoftwareManager {
       );
 
       if (result.exitCode == 0) {
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
+        // 成功时无需提示用户
         return (true, null);
       } else {
         // 即使退出码非0，也可能已经停止（nginx可能未运行）
@@ -214,10 +208,7 @@ class NginxManager extends SoftwareManager {
       );
 
       if (result.exitCode == 0) {
-        await NotificationService.showSuccess(
-          title: '重启成功',
-          message: '${server.name} 已重启',
-        );
+        // 成功时无需提示用户
         return (true, null);
       } else {
         // 如果reload失败，尝试先停止再启动

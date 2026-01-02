@@ -241,10 +241,7 @@ class PhpManager extends SoftwareManager {
         }
         // 启动成功
         _processIds[server.id] = processId;
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动（端口: $port）',
-        );
+        // 成功时无需提示用户
         return (true, null);
       } else if (processId == -1) {
         // processId == -1 表示端口被其他进程占用
@@ -416,10 +413,7 @@ class PhpManager extends SoftwareManager {
           print('[PHP停止] 进程树已成功终止');
         }
         _processIds.remove(server.id);
-        await NotificationService.showSuccess(
-          title: '停止成功',
-          message: '${server.name} 已停止',
-        );
+        // 成功时无需提示用户
         return (true, null);
       } else {
         // 进程可能已经不存在

@@ -58,10 +58,7 @@ class MongodbManager extends InitializableSoftwareManager {
 
       if (result.exitCode == 0) {
         // 启动成功
-        await NotificationService.showSuccess(
-          title: '启动成功',
-          message: '${server.name} 已启动',
-        );
+        // 成功时无需提示用户
         return (true, null);
       } else {
         final errorOutput = result.stderr.toString();
@@ -140,10 +137,7 @@ class MongodbManager extends InitializableSoftwareManager {
   Future<(bool success, String? error)> stop(Software server) async {
     final result = await stopSilently(server);
     if (result.$1) {
-      await NotificationService.showSuccess(
-        title: '停止成功',
-        message: '${server.name} 已停止',
-      );
+      // 成功时无需提示用户
     } else {
       final errorOutput = result.$2 ?? '未知错误';
       // 检查是否是"服务未运行"的情况

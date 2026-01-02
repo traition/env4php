@@ -177,10 +177,7 @@ class MysqlManager extends InitializableSoftwareManager {
   Future<(bool success, String? error)> stop(Software server) async {
     final result = await stopSilently(server);
     if (result.$1) {
-      await NotificationService.showSuccess(
-        title: '停止成功',
-        message: '${server.name} 已停止',
-      );
+      // 成功时无需提示用户
     } else {
       final errorOutput = result.$2 ?? '未知错误';
       // 检查是否是"服务未运行"的情况
