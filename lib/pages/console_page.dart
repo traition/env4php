@@ -12,6 +12,7 @@ import '../services/icon_service.dart';
 import '../models/software_model.dart';
 import '../utils/software_menu_helper.dart';
 import '../utils/nginx_project_helper.dart';
+import '../services/uninstall_service.dart';
 import '../services/software_managers/software_manager.dart';
 import '../services/software_managers/software_manager_factory.dart';
 import '../services/software_managers/php_manager.dart';
@@ -4173,20 +4174,26 @@ class _ConsolePageState extends State<ConsolePage> {
           ElevatedButton(
             onPressed: () {
               Navigator.of(context).pop();
-              // TODO: 实现卸载逻辑
-              _loadInstalledServers();
-              NotificationService.showSuccess(
-                title: '卸载成功',
-                message: '已卸载 ${software.name}',
-              );
+              _uninstallSoftware(software);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Colors.white,
             ),
             child: const Text('卸载'),
           ),
         ],
       ),
+    );
+  }
+
+  /// 卸载软件
+  Future<void> _uninstallSoftware(Software software) async {
+    await UninstallService.uninstallSoftware(
+      software,
+      context: context,
+      onStopServer: _stopServerSilently,
+      onRefresh: _loadInstalledServers,
     );
   }
 
