@@ -42,7 +42,10 @@ class TitleBar extends StatelessWidget {
             ),
           ),
           // 工具列表（如果有）- 显示在title之后
-          if (toolsList != null) Expanded(child: toolsList!),
+          if (toolsList != null)
+            Expanded(child: toolsList!)
+          else
+            const Spacer(), // 如果没有工具列表，使用 Spacer 占据中间空间
           // 右侧窗口控制按钮
           Row(
             children: [
