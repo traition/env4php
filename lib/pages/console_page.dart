@@ -20,6 +20,7 @@ import '../services/software_managers/redis_manager.dart';
 import '../services/software_managers/rudis_manager.dart';
 import '../services/service_status_checker.dart';
 import '../services/storage_monitor_service.dart';
+import '../services/hosts_service.dart';
 import 'nginx_config_page.dart';
 
 /// 控制台页面
@@ -3852,6 +3853,11 @@ class _ConsolePageState extends State<ConsolePage> {
         _isNginxRunning,
         _reloadNginx,
       );
+
+      // 如果server_name不以.localhost结尾，添加到hosts文件
+      if (serverName.isNotEmpty) {
+        await _addHostsEntryIfNeeded(serverName);
+      }
     } catch (e) {
       await NotificationService.showError(title: '创建失败', message: '创建项目失败: $e');
     }
@@ -4014,6 +4020,11 @@ class _ConsolePageState extends State<ConsolePage> {
         _isNginxRunning,
         _reloadNginx,
       );
+
+      // 如果server_name不以.localhost结尾，添加到hosts文件
+      if (serverName.isNotEmpty) {
+        await _addHostsEntryIfNeeded(serverName);
+      }
     } catch (e) {
       await NotificationService.showError(title: '创建失败', message: '创建项目失败: $e');
     }
@@ -4098,8 +4109,50 @@ class _ConsolePageState extends State<ConsolePage> {
         _isNginxRunning,
         _reloadNginx,
       );
+
+      // 如果server_name不以.localhost结尾，添加到hosts文件
+      if (serverName.isNotEmpty) {
+        await _addHostsEntryIfNeeded(serverName);
+      }
     } catch (e) {
       await NotificationService.showError(title: '创建失败', message: '创建项目失败: $e');
+    }
+  }
+
+  /// 添加hosts条目（如果server_name不以.localhost结尾）
+  /// 使用 HostsService 确保域名指向 127.0.0.1
+  Future<void> _addHostsEntryIfNeeded(String serverName) async {
+    // 检查server_name是否以.localhost结尾
+    if (serverName.trim().endsWith('.localhost')) {
+      return; // 不需要添加hosts条目
+    }
+
+    final trimmedServerName = serverName.trim();
+    if (trimmedServerName.isEmpty) {
+      return; // 空的server_name不需要添加
+    }
+
+    try {
+      // 使用 HostsService 确保域名指向 127.0.0.1
+      final success = await HostsService.ensureDomainPointsToLocalhost(
+        trimmedServerName,
+      );
+
+      if (success) {
+        if (kDebugMode) {
+          print('[Hosts] 成功添加hosts条目: 127.0.0.1 $trimmedServerName');
+        }
+      } else {
+        if (kDebugMode) {
+          print('[Hosts] 添加hosts条目失败，可能需要管理员权限');
+        }
+        // 不显示错误通知，因为这不是关键操作
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[Hosts] 添加hosts条目时发生异常: $e');
+      }
+      // 不显示错误通知，因为这不是关键操作
     }
   }
 

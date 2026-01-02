@@ -1,11 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as path;
-import '../models/software_model.dart';
-import '../services/config_service.dart';
-import '../services/software_source_service.dart';
-import '../services/install_service.dart';
-import 'hosts_edit_page.dart';
+import '../tools/php_version_tool.dart';
+import '../tools/hosts_edit_tool.dart';
+import '../tools/mysql_password_reset_tool.dart';
+import '../tools/postgresql_password_reset_tool.dart';
+import '../tools/tcp_ports_tool.dart';
 
 /// 工具项数据模型
 class _ToolItemData {
@@ -26,152 +24,6 @@ class QuickToolsPage extends StatefulWidget {
 
 class _QuickToolsPageState extends State<QuickToolsPage> {
   int _selectedTabIndex = 0; // 0: 系统, 1: 编解码, 2: 加解密, 3: 生成器
-
-  /// 更换终端的PHP版本
-  Future<void> _changePhpVersion(BuildContext context) async {
-    // 1. 检查已安装的 PHP 版本
-    final storagePath = await ConfigService.getStoragePath();
-    if (storagePath == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('存储目录未设置，请先设置存储目录')));
-      return;
-    }
-
-    final softwareSource = await SoftwareSourceService.getSource();
-    if (softwareSource == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('无法加载软件源')));
-      return;
-    }
-
-    // 获取已安装的 PHP 软件列表
-    final List<Software> installedPhp = [];
-    for (final php in softwareSource.php) {
-      final dir = Directory('$storagePath/php/${php.id}');
-      if (await dir.exists()) {
-        installedPhp.add(php);
-      }
-    }
-
-    // 检查数量
-    if (installedPhp.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('未安装 PHP，请先安装 2 个或以上版本的 PHP')),
-      );
-      return;
-    }
-
-    if (installedPhp.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('只安装了一个 PHP 版本，无法更改。请先安装 2 个或以上版本的 PHP')),
-      );
-      return;
-    }
-
-    // 2. 让用户选择 PHP 版本
-    final selectedPhp = await showDialog<Software>(
-      context: context,
-      useRootNavigator: false, // 不在根 Navigator 中显示，只在 Container 区域显示
-      builder: (context) => AlertDialog(
-        title: const Text('选择 PHP 版本'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: installedPhp.length,
-            itemBuilder: (context, index) {
-              final php = installedPhp[index];
-              return ListTile(
-                title: Text(php.name),
-                subtitle: php.description != null
-                    ? Text(php.description!)
-                    : null,
-                onTap: () => Navigator.of(context).pop(php),
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
-    );
-
-    if (selectedPhp == null) {
-      // 用户取消了选择
-      return;
-    }
-
-    // 3. 修改 php.bat 文件
-    final selectedPhpPath = path.join(storagePath, 'php', selectedPhp.id);
-
-    final updateResult = await InstallService.updatePhpBat(
-      selectedPhpPath,
-      storagePath,
-      onProgress: (step, progress, logMessage) {
-        // 可以在这里显示进度，但通常不需要
-      },
-    );
-
-    if (!updateResult.$1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('替换失败: ${updateResult.$2 ?? "未知错误"}，请重新安装 PHP')),
-      );
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('已成功将 PHP 版本切换为 ${selectedPhp.name}'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  /// 编辑hosts文件
-  void _editHosts(BuildContext context) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (context) => const HostsEditPage()));
-  }
-
-  /// 重置MySQL root密码（占位函数）
-  void _resetMysqlPassword(BuildContext context) {
-    // TODO: 实现重置MySQL root密码的逻辑
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('重置MySQL root密码（功能待实现）'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  /// 重置PostgreSQL postgre密码（占位函数）
-  void _resetPostgresqlPassword(BuildContext context) {
-    // TODO: 实现重置PostgreSQL postgre密码的逻辑
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('重置PostgreSQL postgre密码（功能待实现）'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
-  /// 显示TCP端口占用列表（占位函数）
-  void _showTcpPorts(BuildContext context) {
-    // TODO: 实现TCP端口占用列表的逻辑
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('TCP端口占用列表（功能待实现）'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -264,27 +116,27 @@ class _QuickToolsPageState extends State<QuickToolsPage> {
       _ToolItemData(
         icon: Icons.code,
         title: '更换PHP版本',
-        onTap: () => _changePhpVersion(context),
+        onTap: () => PhpVersionTool.execute(context),
       ),
       _ToolItemData(
         icon: Icons.edit,
         title: '编辑hosts',
-        onTap: () => _editHosts(context),
+        onTap: () => HostsEditTool.execute(context),
       ),
       _ToolItemData(
         icon: Icons.lock_reset,
         title: '重置MySQL密码',
-        onTap: () => _resetMysqlPassword(context),
+        onTap: () => MysqlPasswordResetTool.execute(context),
       ),
       _ToolItemData(
         icon: Icons.lock_reset,
         title: '重置PostgreSQL密码',
-        onTap: () => _resetPostgresqlPassword(context),
+        onTap: () => PostgresqlPasswordResetTool.execute(context),
       ),
       _ToolItemData(
         icon: Icons.network_check,
         title: 'TCP端口占用',
-        onTap: () => _showTcpPorts(context),
+        onTap: () => TcpPortsTool.execute(context),
       ),
     ];
 
