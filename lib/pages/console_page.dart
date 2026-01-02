@@ -1440,26 +1440,658 @@ class _ConsolePageState extends State<ConsolePage> {
     }
   }
 
-  /// 启动项目（占位函数）
-  void _startProject(_ProjectInfo project) {
-    setState(() {
-      _projectRunningStatus[project.name] = true;
-    });
-    NotificationService.showInfo(
-      title: '提示',
-      message: '启动 ${project.name}（功能待实现）',
+  /// 启动项目
+  Future<void> _startProject(_ProjectInfo project) async {
+    try {
+      // 检查是否为nginx项目
+      final isNginxProject = project.confFilePath.isNotEmpty;
+
+      if (isNginxProject) {
+        // nginx项目：启动nginx、PHP版本和相关数据库
+        await _startNginxProject(project);
+      } else {
+        // 非nginx项目：只启动相关软件（从shared_preferences读取）
+        await _startNonNginxProject(project);
+      }
+
+      // 更新项目运行状态
+      if (mounted) {
+        setState(() {
+          _projectRunningStatus[project.name] = true;
+        });
+      }
+    } catch (e) {
+      await NotificationService.showError(
+        title: '启动失败',
+        message: '启动项目 ${project.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 启动nginx项目
+  Future<void> _startNginxProject(_ProjectInfo project) async {
+    // 1. 从nginx配置文件中读取PHP版本和数据库ID
+    final phpVersionId = await NginxProjectHelper.readPhpVersionFromConfig(
+      project.confFilePath,
+    );
+    final databaseIds = await NginxProjectHelper.readDatabaseIdsFromConfig(
+      project.confFilePath,
+    );
+
+    // 2. 启动nginx
+    final nginxDir = await _getNginxDirectory();
+    if (nginxDir == null) {
+      await NotificationService.showError(title: '启动失败', message: 'nginx未安装');
+      return;
+    }
+
+    // 查找nginx软件
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) {
+      await NotificationService.showError(title: '启动失败', message: '软件源未加载');
+      return;
+    }
+
+    final nginx = softwareSource.servers.firstWhere(
+      (s) => s.cate4?.toLowerCase() == 'nginx',
+      orElse: () => Software(
+        id: '',
+        name: '',
+        byte: 0,
+        downloadURL: '',
+        commands: [],
+        attachments: [],
+      ),
+    );
+
+    if (nginx.id.isEmpty) {
+      await NotificationService.showError(title: '启动失败', message: '未找到nginx软件');
+      return;
+    }
+
+    // 启动nginx
+    if (_serverRunningStatus[nginx.id] != true) {
+      await _startServer(nginx);
+    }
+
+    // 3. 启动PHP版本（如果配置了）
+    if (phpVersionId != null && phpVersionId.isNotEmpty) {
+      final php = softwareSource.php.firstWhere(
+        (s) => s.id == phpVersionId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+
+      if (php.id.isNotEmpty && _serverRunningStatus[php.id] != true) {
+        await _startServer(php);
+      }
+    }
+
+    // 4. 启动相关数据库
+    for (final dbId in databaseIds) {
+      final db = softwareSource.databases.firstWhere(
+        (s) => s.id == dbId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+
+      if (db.id.isNotEmpty && _serverRunningStatus[db.id] != true) {
+        await _startServer(db);
+      }
+    }
+
+    // 保存最后启动时间
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'project_${project.name}_last_started',
+      DateTime.now().toIso8601String(),
     );
   }
 
-  /// 停止项目（占位函数）
-  void _stopProject(_ProjectInfo project) {
-    setState(() {
-      _projectRunningStatus[project.name] = false;
-    });
-    NotificationService.showInfo(
-      title: '提示',
-      message: '停止 ${project.name}（功能待实现）',
+  /// 启动非nginx项目
+  Future<void> _startNonNginxProject(_ProjectInfo project) async {
+    // 从shared_preferences读取项目数据
+    final prefs = await SharedPreferences.getInstance();
+    final projectKey = 'project_${project.name}';
+    final projectDataStr = prefs.getString(projectKey);
+
+    if (projectDataStr == null || projectDataStr.isEmpty) {
+      await NotificationService.showError(title: '启动失败', message: '项目数据不存在');
+      return;
+    }
+
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) {
+      await NotificationService.showError(title: '启动失败', message: '软件源未加载');
+      return;
+    }
+
+    // 解析项目数据（格式：{name: xxx, command: xxx, phpVersion: xxx, databases: [xxx, yyy]})
+    // 提取PHP版本
+    String? phpVersionId;
+    final phpMatch = RegExp(r"phpVersion:\s*(\w+)").firstMatch(projectDataStr);
+    if (phpMatch != null) {
+      phpVersionId = phpMatch.group(1);
+    }
+
+    // 提取数据库ID列表
+    final List<String> databaseIds = [];
+    final dbMatches = RegExp(
+      r"databases:\s*\[(.*?)\]",
+    ).firstMatch(projectDataStr);
+    if (dbMatches != null) {
+      final dbStr = dbMatches.group(1) ?? '';
+      // 支持多种格式：'xxx', "xxx", xxx
+      final dbPattern = RegExp(r'''['"]?(\w+)['"]?''');
+      final dbMatches2 = dbPattern.allMatches(dbStr);
+      for (final match in dbMatches2) {
+        final dbId = match.group(1);
+        if (dbId != null && dbId.isNotEmpty) {
+          databaseIds.add(dbId);
+        }
+      }
+    }
+
+    // 启动PHP版本（如果配置了）
+    if (phpVersionId != null &&
+        phpVersionId.isNotEmpty &&
+        phpVersionId != 'null') {
+      final php = softwareSource.php.firstWhere(
+        (s) => s.id == phpVersionId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+
+      if (php.id.isNotEmpty && _serverRunningStatus[php.id] != true) {
+        await _startServer(php);
+      }
+    }
+
+    // 启动相关数据库
+    for (final dbId in databaseIds) {
+      final db = softwareSource.databases.firstWhere(
+        (s) => s.id == dbId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+
+      if (db.id.isNotEmpty && _serverRunningStatus[db.id] != true) {
+        await _startServer(db);
+      }
+    }
+
+    // 保存最后启动时间
+    await prefs.setString(
+      'project_${project.name}_last_started',
+      DateTime.now().toIso8601String(),
     );
+  }
+
+  /// 获取项目依赖的服务ID列表
+  /// 返回 (nginxId, phpVersionId, databaseIds)
+  Future<({String? nginxId, String? phpVersionId, List<String> databaseIds})>
+  _getProjectDependencies(_ProjectInfo project) async {
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) {
+      return (nginxId: null, phpVersionId: null, databaseIds: <String>[]);
+    }
+
+    String? nginxId;
+    String? phpVersionId;
+    final List<String> databaseIds = [];
+
+    // 获取nginx ID
+    final nginx = softwareSource.servers.firstWhere(
+      (s) => s.cate4?.toLowerCase() == 'nginx',
+      orElse: () => Software(
+        id: '',
+        name: '',
+        byte: 0,
+        downloadURL: '',
+        commands: [],
+        attachments: [],
+      ),
+    );
+    if (nginx.id.isNotEmpty) {
+      nginxId = nginx.id;
+    }
+
+    if (project.confFilePath.isNotEmpty) {
+      // Nginx项目：从配置文件读取
+      phpVersionId = await NginxProjectHelper.readPhpVersionFromConfig(
+        project.confFilePath,
+      );
+      databaseIds.addAll(
+        await NginxProjectHelper.readDatabaseIdsFromConfig(
+          project.confFilePath,
+        ),
+      );
+    } else {
+      // 非Nginx项目：从shared_preferences读取
+      final prefs = await SharedPreferences.getInstance();
+      final projectKey = 'project_${project.name}';
+      final projectDataStr = prefs.getString(projectKey);
+      if (projectDataStr != null && projectDataStr.isNotEmpty) {
+        // 提取PHP版本
+        final phpMatch = RegExp(
+          r"phpVersion:\s*(\w+)",
+        ).firstMatch(projectDataStr);
+        if (phpMatch != null) {
+          phpVersionId = phpMatch.group(1);
+          if (phpVersionId == 'null') {
+            phpVersionId = null;
+          }
+        }
+
+        // 提取数据库ID列表
+        final dbMatches = RegExp(
+          r"databases:\s*\[(.*?)\]",
+        ).firstMatch(projectDataStr);
+        if (dbMatches != null) {
+          final dbStr = dbMatches.group(1) ?? '';
+          final dbPattern = RegExp(r'''['"]?(\w+)['"]?''');
+          final dbMatches2 = dbPattern.allMatches(dbStr);
+          for (final match in dbMatches2) {
+            final dbId = match.group(1);
+            if (dbId != null && dbId.isNotEmpty) {
+              databaseIds.add(dbId);
+            }
+          }
+        }
+      }
+    }
+
+    return (
+      nginxId: nginxId,
+      phpVersionId: phpVersionId,
+      databaseIds: databaseIds,
+    );
+  }
+
+  /// 获取所有运行中项目的依赖服务
+  /// 返回 Map<服务ID, Set<项目名称>>
+  Future<Map<String, Set<String>>> _getAllRunningProjectsDependencies() async {
+    final Map<String, Set<String>> dependencies = {};
+
+    for (final project in _projects) {
+      // 只检查运行中的项目
+      if (_projectRunningStatus[project.name] != true) {
+        continue;
+      }
+
+      final deps = await _getProjectDependencies(project);
+
+      // 添加nginx依赖
+      if (deps.nginxId != null) {
+        dependencies
+            .putIfAbsent(deps.nginxId!, () => <String>{})
+            .add(project.name);
+      }
+
+      // 添加PHP依赖
+      if (deps.phpVersionId != null && deps.phpVersionId!.isNotEmpty) {
+        dependencies
+            .putIfAbsent(deps.phpVersionId!, () => <String>{})
+            .add(project.name);
+      }
+
+      // 添加数据库依赖
+      for (final dbId in deps.databaseIds) {
+        dependencies.putIfAbsent(dbId, () => <String>{}).add(project.name);
+      }
+    }
+
+    return dependencies;
+  }
+
+  /// 停止项目
+  Future<void> _stopProject(_ProjectInfo project) async {
+    try {
+      // 1. 检查是否有其他项目正在运行
+      final otherRunningProjects = _projects
+          .where(
+            (p) =>
+                p.name != project.name && _projectRunningStatus[p.name] == true,
+          )
+          .toList();
+
+      // 2. 获取当前项目的依赖
+      final projectDeps = await _getProjectDependencies(project);
+
+      // 3. 如果没有其他项目运行，直接停止所有服务
+      if (otherRunningProjects.isEmpty) {
+        await _stopProjectServices(project, projectDeps);
+        if (mounted) {
+          setState(() {
+            _projectRunningStatus[project.name] = false;
+          });
+        }
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '项目 ${project.name} 已停止',
+        );
+        return;
+      }
+
+      // 4. 如果有其他项目运行，检查服务冲突
+      final allDependencies = await _getAllRunningProjectsDependencies();
+
+      // 找出当前项目要停止的服务中，哪些被其他项目需要
+      final List<String> conflictingServices = [];
+      final Map<String, Set<String>> conflictingProjects = {};
+
+      // 检查nginx
+      if (projectDeps.nginxId != null) {
+        final dependentProjects = allDependencies[projectDeps.nginxId!];
+        if (dependentProjects != null && dependentProjects.isNotEmpty) {
+          final otherProjects = dependentProjects
+              .where((name) => name != project.name)
+              .toSet();
+          if (otherProjects.isNotEmpty) {
+            conflictingServices.add(projectDeps.nginxId!);
+            conflictingProjects[projectDeps.nginxId!] = otherProjects;
+          }
+        }
+      }
+
+      // 检查PHP
+      if (projectDeps.phpVersionId != null &&
+          projectDeps.phpVersionId!.isNotEmpty) {
+        final dependentProjects = allDependencies[projectDeps.phpVersionId!];
+        if (dependentProjects != null && dependentProjects.isNotEmpty) {
+          final otherProjects = dependentProjects
+              .where((name) => name != project.name)
+              .toSet();
+          if (otherProjects.isNotEmpty) {
+            conflictingServices.add(projectDeps.phpVersionId!);
+            conflictingProjects[projectDeps.phpVersionId!] = otherProjects;
+          }
+        }
+      }
+
+      // 检查数据库
+      for (final dbId in projectDeps.databaseIds) {
+        final dependentProjects = allDependencies[dbId];
+        if (dependentProjects != null && dependentProjects.isNotEmpty) {
+          final otherProjects = dependentProjects
+              .where((name) => name != project.name)
+              .toSet();
+          if (otherProjects.isNotEmpty) {
+            conflictingServices.add(dbId);
+            conflictingProjects[dbId] = otherProjects;
+          }
+        }
+      }
+
+      // 5. 如果有冲突，询问用户
+      Set<String> affectedProjects = {};
+      if (conflictingServices.isNotEmpty) {
+        // 收集所有依赖冲突服务的项目
+        for (final projects in conflictingProjects.values) {
+          affectedProjects.addAll(projects);
+        }
+
+        final shouldContinue = await _showStopProjectConfirmationDialog(
+          project.name,
+          conflictingServices,
+          conflictingProjects,
+        );
+        if (shouldContinue == null || !shouldContinue) {
+          return; // 用户取消
+        }
+
+        // 用户确认继续停止，同时停止所有依赖冲突服务的项目
+        if (shouldContinue) {
+          for (final affectedProjectName in affectedProjects) {
+            final affectedProject = _projects.firstWhere(
+              (p) => p.name == affectedProjectName,
+              orElse: () => _ProjectInfo(
+                name: '',
+                confFilePath: '',
+                serverName: '',
+                ports: '',
+              ),
+            );
+            if (affectedProject.name.isNotEmpty &&
+                _projectRunningStatus[affectedProject.name] == true) {
+              // 更新项目状态为停止（服务会在下面统一停止）
+              if (mounted) {
+                setState(() {
+                  _projectRunningStatus[affectedProject.name] = false;
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // 6. 停止服务（根据用户选择）
+      await _stopProjectServices(project, projectDeps);
+
+      // 7. 更新项目状态
+      if (mounted) {
+        setState(() {
+          _projectRunningStatus[project.name] = false;
+        });
+      }
+
+      // 8. 显示停止成功的消息
+      if (affectedProjects.isNotEmpty) {
+        final affectedProjectsStr = affectedProjects.join('、');
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '项目 ${project.name} 已停止，同时已停止依赖相同服务的项目：$affectedProjectsStr',
+        );
+      } else {
+        await NotificationService.showSuccess(
+          title: '停止成功',
+          message: '项目 ${project.name} 已停止',
+        );
+      }
+    } catch (e) {
+      await NotificationService.showError(
+        title: '停止失败',
+        message: '停止项目 ${project.name} 时发生错误: $e',
+      );
+    }
+  }
+
+  /// 显示停止项目确认对话框
+  /// 返回用户选择：true=继续停止所有服务，false=只停止其他项目不需要的服务，null=取消
+  Future<bool?> _showStopProjectConfirmationDialog(
+    String projectName,
+    List<String> conflictingServices,
+    Map<String, Set<String>> conflictingProjects,
+  ) async {
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) {
+      return false;
+    }
+
+    // 构建服务名称列表
+    final List<String> serviceNames = [];
+    final List<String> projectNamesList = [];
+
+    for (final serviceId in conflictingServices) {
+      String? serviceName;
+      // 查找服务名称
+      Software? service;
+      try {
+        service = softwareSource.servers.firstWhere(
+          (s) => s.id == serviceId,
+          orElse: () => Software(
+            id: '',
+            name: '',
+            byte: 0,
+            downloadURL: '',
+            commands: [],
+            attachments: [],
+          ),
+        );
+      } catch (e) {
+        // 不在servers中
+      }
+
+      if (service == null || service.id.isEmpty) {
+        try {
+          service = softwareSource.php.firstWhere(
+            (s) => s.id == serviceId,
+            orElse: () => Software(
+              id: '',
+              name: '',
+              byte: 0,
+              downloadURL: '',
+              commands: [],
+              attachments: [],
+            ),
+          );
+        } catch (e) {
+          // 不在php中
+        }
+      }
+
+      if (service == null || service.id.isEmpty) {
+        try {
+          service = softwareSource.databases.firstWhere(
+            (s) => s.id == serviceId,
+            orElse: () => Software(
+              id: '',
+              name: '',
+              byte: 0,
+              downloadURL: '',
+              commands: [],
+              attachments: [],
+            ),
+          );
+        } catch (e) {
+          // 不在databases中
+        }
+      }
+
+      serviceName = service?.name ?? serviceId;
+      serviceNames.add(serviceName);
+
+      // 收集依赖此服务的项目名称
+      final projects = conflictingProjects[serviceId] ?? {};
+      projectNamesList.addAll(projects);
+    }
+
+    final uniqueProjectNames = projectNamesList.toSet().toList();
+    final serviceNamesStr = serviceNames.join('、');
+    final projectNamesStr = uniqueProjectNames.join('、');
+
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('停止项目确认'),
+        content: Text(
+          '停止项目 "$projectName" 将会停止以下服务：\n\n'
+          '$serviceNamesStr\n\n'
+          '但这些服务也被以下项目使用：\n\n'
+          '$projectNamesStr\n\n'
+          '是否继续停止所有服务？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('继续停止'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 停止项目相关的服务
+  Future<void> _stopProjectServices(
+    _ProjectInfo project,
+    ({String? nginxId, String? phpVersionId, List<String> databaseIds}) deps,
+  ) async {
+    final softwareSource = await SoftwareSourceService.getSource();
+    if (softwareSource == null) {
+      return;
+    }
+
+    // 停止数据库
+    for (final dbId in deps.databaseIds) {
+      final db = softwareSource.databases.firstWhere(
+        (s) => s.id == dbId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+      if (db.id.isNotEmpty && _serverRunningStatus[db.id] == true) {
+        await _stopServer(db);
+      }
+    }
+
+    // 停止PHP版本
+    if (deps.phpVersionId != null && deps.phpVersionId!.isNotEmpty) {
+      final php = softwareSource.php.firstWhere(
+        (s) => s.id == deps.phpVersionId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+      if (php.id.isNotEmpty && _serverRunningStatus[php.id] == true) {
+        await _stopServer(php);
+      }
+    }
+
+    // 停止nginx（仅当是nginx项目时）
+    if (project.confFilePath.isNotEmpty && deps.nginxId != null) {
+      final nginx = softwareSource.servers.firstWhere(
+        (s) => s.id == deps.nginxId,
+        orElse: () => Software(
+          id: '',
+          name: '',
+          byte: 0,
+          downloadURL: '',
+          commands: [],
+          attachments: [],
+        ),
+      );
+      if (nginx.id.isNotEmpty && _serverRunningStatus[nginx.id] == true) {
+        await _stopServer(nginx);
+      }
+    }
   }
 
   /// 重启项目（占位函数）
@@ -1471,12 +2103,168 @@ class _ConsolePageState extends State<ConsolePage> {
   }
 
   /// 打开项目（占位函数）
-  void _openProject(_ProjectInfo project) {
-    // TODO: 实现打开项目逻辑（可能在浏览器中打开）
-    NotificationService.showInfo(
-      title: '提示',
-      message: '打开 ${project.name}（功能待实现）',
-    );
+  /// 打开项目
+  Future<void> _openProject(_ProjectInfo project) async {
+    try {
+      // 只支持nginx项目
+      if (project.confFilePath.isEmpty) {
+        await NotificationService.showError(
+          title: '错误',
+          message: '非nginx项目暂不支持打开',
+        );
+        return;
+      }
+
+      // 读取nginx配置文件
+      final confFile = File(project.confFilePath);
+      if (!await confFile.exists()) {
+        await NotificationService.showError(
+          title: '错误',
+          message: '配置文件不存在: ${project.confFilePath}',
+        );
+        return;
+      }
+
+      final content = await confFile.readAsString();
+      final lines = content.split('\n');
+
+      // 查找server块
+      final serverBlockPattern = RegExp(
+        r'server\s*\{[^}]*\}',
+        multiLine: true,
+        dotAll: true,
+      );
+      final serverBlockMatch = serverBlockPattern.firstMatch(content);
+      if (serverBlockMatch == null) {
+        await NotificationService.showError(
+          title: '错误',
+          message: '未找到server配置块',
+        );
+        return;
+      }
+
+      final serverBlock = serverBlockMatch.group(0) ?? '';
+
+      // 1. 检查是否使用SSL
+      // 检查ssl_certificate和ssl_certificate_key是否未注释
+      bool hasSsl = false;
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        // 跳过空行和注释行
+        if (trimmedLine.isEmpty || trimmedLine.startsWith('#')) {
+          continue;
+        }
+        // 检查ssl_certificate是否未注释
+        if (trimmedLine.startsWith('ssl_certificate ')) {
+          hasSsl = true;
+          break;
+        }
+        // 检查ssl_certificate_key是否未注释
+        if (trimmedLine.startsWith('ssl_certificate_key ')) {
+          hasSsl = true;
+          break;
+        }
+      }
+
+      // 2. 提取server_name
+      final serverNamePattern = RegExp(r'server_name\s+([^;]+);');
+      final serverNameMatch = serverNamePattern.firstMatch(serverBlock);
+      if (serverNameMatch == null) {
+        await NotificationService.showError(
+          title: '错误',
+          message: '未找到server_name配置',
+        );
+        return;
+      }
+
+      String serverName = serverNameMatch.group(1)?.trim() ?? '';
+      // 去掉引号
+      serverName = serverName.replaceAll(RegExp(r'''["']'''), '');
+      // 保留完整的server_name，包括.localhost部分
+
+      // 3. 提取listen端口
+      String? port;
+      if (hasSsl) {
+        // 使用SSL：查找带ssl标记的listen
+        final sslListenPattern = RegExp(
+          r'^\s*listen\s+([^;#]+)\s+ssl',
+          multiLine: true,
+          caseSensitive: false,
+        );
+        final sslListenMatch = sslListenPattern.firstMatch(serverBlock);
+        if (sslListenMatch != null) {
+          String listenValue = sslListenMatch.group(1)?.trim() ?? '';
+          // 提取端口号
+          final portMatch = RegExp(r':?(\d+)$').firstMatch(listenValue);
+          if (portMatch != null) {
+            port = portMatch.group(1);
+          } else if (RegExp(r'^\d+$').hasMatch(listenValue)) {
+            port = listenValue;
+          }
+        }
+      } else {
+        // 不使用SSL：查找不带ssl和quic标记的listen
+        final httpListenPattern = RegExp(
+          r'^\s*listen\s+([^;#]+);',
+          multiLine: true,
+        );
+        final httpListenMatches = httpListenPattern.allMatches(serverBlock);
+
+        for (final match in httpListenMatches) {
+          String listenValue = match.group(1)?.trim() ?? '';
+          // 检查是否包含ssl或quic标记（忽略大小写）
+          if (RegExp(r'ssl|quic', caseSensitive: false).hasMatch(listenValue)) {
+            continue; // 跳过带ssl或quic标记的listen
+          }
+
+          // 提取端口号
+          final portMatch = RegExp(r':?(\d+)$').firstMatch(listenValue);
+          if (portMatch != null) {
+            port = portMatch.group(1);
+            break; // 找到第一个非SSL的端口
+          } else if (RegExp(r'^\d+$').hasMatch(listenValue)) {
+            port = listenValue;
+            break;
+          }
+        }
+      }
+
+      if (port == null) {
+        await NotificationService.showError(
+          title: '错误',
+          message: '未找到有效的listen端口配置',
+        );
+        return;
+      }
+
+      // 4. 构建URL
+      final protocol = hasSsl ? 'https' : 'http';
+      String url;
+      if (hasSsl) {
+        // SSL: 如果端口是443，省略端口
+        if (port == '443') {
+          url = '$protocol://$serverName';
+        } else {
+          url = '$protocol://$serverName:$port';
+        }
+      } else {
+        // HTTP: 如果端口是80，省略端口
+        if (port == '80') {
+          url = '$protocol://$serverName';
+        } else {
+          url = '$protocol://$serverName:$port';
+        }
+      }
+
+      // 5. 执行explorer命令
+      await Process.run('explorer', [url], runInShell: true);
+
+    } catch (e) {
+      await NotificationService.showError(
+        title: '打开失败',
+        message: '打开项目时发生错误: $e',
+      );
+    }
   }
 
   /// 构建项目列表项
@@ -1511,54 +2299,42 @@ class _ConsolePageState extends State<ConsolePage> {
                   children: [
                     // 启动按钮（只在未启动时显示）
                     if (!isRunning)
-                      TextButton.icon(
+                      IconButton(
                         onPressed: () => _startProject(project),
                         icon: const Icon(Icons.play_circle_outline, size: 18),
-                        label: const Text('启动'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                        ),
+                        tooltip: '启动',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     // 停止按钮（只在启动后显示）
                     if (isRunning)
-                      TextButton.icon(
+                      IconButton(
                         onPressed: () => _stopProject(project),
                         icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                        label: const Text('停止'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                        ),
+                        tooltip: '停止',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     // 重启按钮（只在启动后显示）
                     if (isRunning)
-                      TextButton.icon(
+                      IconButton(
                         onPressed: () => _restartProject(project),
                         icon: const Icon(Icons.refresh, size: 18),
-                        label: const Text('重启'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                        ),
+                        tooltip: '重启',
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(),
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     // 打开按钮（始终显示）
-                    TextButton.icon(
+                    IconButton(
                       onPressed: () => _openProject(project),
-                      icon: const Icon(Icons.open_in_browser, size: 18),
-                      label: const Text('打开'),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                      ),
+                      icon: const Icon(Icons.launch, size: 18),
+                      tooltip: '打开',
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(),
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                   ],
                 ),

@@ -319,6 +319,98 @@ class NginxProjectHelper {
     lines.addAll(dbConfigLines);
   }
 
+  /// 从nginx配置文件中读取PHP版本ID
+  /// [confFilePath] nginx配置文件路径
+  /// 返回PHP版本ID，如果未找到或已注释则返回null
+  static Future<String?> readPhpVersionFromConfig(String confFilePath) async {
+    try {
+      final confFile = File(confFilePath);
+      if (!await confFile.exists()) {
+        return null;
+      }
+
+      final content = await confFile.readAsString();
+      final lines = content.split('\n');
+
+      // 查找 include ../conf/php/ 行（通常在第11-12行）
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        // 跳过注释行（包括整行注释和行内注释）
+        if (trimmedLine.startsWith('#')) {
+          continue;
+        }
+        // 匹配 include ../conf/php/phpVersionId.conf; 格式
+        // 也支持 include conf/php/phpVersionId.conf; 格式（向后兼容）
+        // 例如：include ../conf/php/php8.5.1.conf; 或 include conf/php/php81.conf;
+        final match = RegExp(r'include\s+\.\.?/conf/php/([^/]+)\.conf;').firstMatch(trimmedLine);
+        if (match != null) {
+          final phpVersionId = match.group(1);
+          if (phpVersionId != null && phpVersionId.isNotEmpty) {
+            return phpVersionId;
+          }
+        }
+      }
+
+      return null;
+    } catch (e) {
+      if (kDebugMode) {
+        print('[Nginx项目助手] 读取PHP版本失败: $e');
+      }
+      return null;
+    }
+  }
+
+  /// 从nginx配置文件中读取数据库ID列表
+  /// [confFilePath] nginx配置文件路径
+  /// 返回数据库ID列表
+  static Future<List<String>> readDatabaseIdsFromConfig(
+    String confFilePath,
+  ) async {
+    try {
+      final confFile = File(confFilePath);
+      if (!await confFile.exists()) {
+        return [];
+      }
+
+      final content = await confFile.readAsString();
+      final lines = content.split('\n');
+
+      final List<String> databaseIds = [];
+      bool inDatabaseSection = false;
+
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+
+        // 检测数据库配置区域开始
+        if (trimmedLine == '# ENV4PHP_CONF_DONT_EDIT') {
+          inDatabaseSection = true;
+          continue;
+        }
+
+        // 如果在数据库配置区域
+        if (inDatabaseSection) {
+          // 匹配 # databaseId 格式
+          if (trimmedLine.startsWith('# ')) {
+            final dbId = trimmedLine.substring(2).trim();
+            if (dbId.isNotEmpty && dbId != 'ENV4PHP_CONF_DONT_EDIT') {
+              databaseIds.add(dbId);
+            }
+          } else if (trimmedLine.isNotEmpty && !trimmedLine.startsWith('#')) {
+            // 遇到非注释行，结束数据库配置区域
+            break;
+          }
+        }
+      }
+
+      return databaseIds;
+    } catch (e) {
+      if (kDebugMode) {
+        print('[Nginx项目助手] 读取数据库ID列表失败: $e');
+      }
+      return [];
+    }
+  }
+
   /// 完成项目创建后的通用操作
   /// 返回是否成功
   static Future<bool> finalizeProjectCreation(
