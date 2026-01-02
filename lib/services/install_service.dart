@@ -1025,6 +1025,7 @@ class InstallService {
           addedPaths: addedPaths,
           onProgress: onProgress,
           progress: progress,
+          isAttachment: true, // 标记为附件命令
         );
 
         // 执行命令（附件命令需要特殊处理路径解析）

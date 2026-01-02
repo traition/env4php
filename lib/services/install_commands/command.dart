@@ -51,6 +51,9 @@ class CommandContext {
   /// 当前命令的进度（0.0-1.0）
   final double progress;
 
+  /// 是否为附件命令
+  final bool isAttachment;
+
   CommandContext({
     required this.command,
     required this.args,
@@ -64,6 +67,7 @@ class CommandContext {
     required this.addedPaths,
     this.onProgress,
     required this.progress,
+    this.isAttachment = false,
   });
 }
 
