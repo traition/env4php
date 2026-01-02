@@ -2258,7 +2258,6 @@ class _ConsolePageState extends State<ConsolePage> {
 
       // 5. 执行explorer命令
       await Process.run('explorer', [url], runInShell: true);
-
     } catch (e) {
       await NotificationService.showError(
         title: '打开失败',
@@ -3203,8 +3202,19 @@ class _ConsolePageState extends State<ConsolePage> {
       return null;
     }
 
+    // 如果只有一个PHP版本，直接返回，跳过选择
+    if (installedPhp.length == 1) {
+      return installedPhp.first.id;
+    }
+
+    // 获取默认PHP版本ID
     final defaultPhpId = await _getDefaultPhpVersion();
+    // 优先选中默认版本，如果默认版本不存在则选中第一个版本
     String? selectedPhpId = defaultPhpId;
+    if (selectedPhpId == null ||
+        !installedPhp.any((php) => php.id == selectedPhpId)) {
+      selectedPhpId = installedPhp.first.id;
+    }
 
     return showDialog<String>(
       context: context,
@@ -3215,23 +3225,17 @@ class _ConsolePageState extends State<ConsolePage> {
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [
-                if (defaultPhpId != null)
-                  RadioListTile<String>(
-                    title: const Text('默认版本'),
-                    value: defaultPhpId,
-                    groupValue: selectedPhpId,
-                    onChanged: (value) => setState(() => selectedPhpId = value),
-                  ),
-                ...installedPhp.map(
-                  (php) => RadioListTile<String>(
-                    title: Text(php.name),
-                    value: php.id,
-                    groupValue: selectedPhpId,
-                    onChanged: (value) => setState(() => selectedPhpId = value),
-                  ),
-                ),
-              ],
+              children: installedPhp
+                  .map(
+                    (php) => RadioListTile<String>(
+                      title: Text(php.name),
+                      value: php.id,
+                      groupValue: selectedPhpId,
+                      onChanged: (value) =>
+                          setState(() => selectedPhpId = value),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
           actions: [
