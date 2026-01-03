@@ -20,6 +20,7 @@ import '../services/software_managers/redis_manager.dart';
 import '../services/software_managers/rudis_manager.dart';
 import '../services/service_status_checker.dart';
 import '../services/storage_monitor_service.dart';
+import '../services/preferences_monitor_service.dart';
 import '../services/hosts_service.dart';
 import 'nginx_config_page.dart';
 
@@ -99,12 +100,19 @@ class _ConsolePageState extends State<ConsolePage> {
 
     // 注册存储目录变更监听器
     StorageMonitorService().addChangeListener(_onStorageChanged);
+
+    // 启动 SharedPreferences 监控
+    _startPreferencesMonitoring();
   }
 
   @override
   void dispose() {
     // 移除存储目录变更监听器
     StorageMonitorService().removeChangeListener(_onStorageChanged);
+
+    // 停止 SharedPreferences 监控
+    _stopPreferencesMonitoring();
+
     super.dispose();
   }
 
@@ -114,6 +122,84 @@ class _ConsolePageState extends State<ConsolePage> {
       // 重新加载服务器列表和项目列表
       _loadInstalledServers();
       _loadProjects();
+    }
+  }
+
+  /// 启动 SharedPreferences 监控
+  Future<void> _startPreferencesMonitoring() async {
+    try {
+      // 获取所有已安装服务的 key
+      final keys = <String>[];
+      for (final server in _installedServers) {
+        keys.add('server_running_status_${server.id}');
+      }
+
+      // 如果还没有服务，等待一下再启动监控
+      if (keys.isEmpty) {
+        // 延迟启动，等待服务列表加载完成
+        Future.delayed(const Duration(seconds: 1), () {
+          if (mounted) {
+            _startPreferencesMonitoring();
+          }
+        });
+        return;
+      }
+
+      // 添加监听器
+      PreferencesMonitorService.getInstance().addChangeListener(
+        _onPreferencesChanged,
+      );
+
+      // 启动监控
+      await PreferencesMonitorService.getInstance().startMonitoring(keys);
+
+      if (kDebugMode) {
+        print('[控制台] 已启动 SharedPreferences 监控，监控 ${keys.length} 个服务状态');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[控制台] 启动 SharedPreferences 监控失败: $e');
+      }
+    }
+  }
+
+  /// 停止 SharedPreferences 监控
+  void _stopPreferencesMonitoring() {
+    try {
+      PreferencesMonitorService.getInstance().removeChangeListener(
+        _onPreferencesChanged,
+      );
+      PreferencesMonitorService.getInstance().stopMonitoring();
+      if (kDebugMode) {
+        print('[控制台] 已停止 SharedPreferences 监控');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[控制台] 停止 SharedPreferences 监控失败: $e');
+      }
+    }
+  }
+
+  /// SharedPreferences 变更回调
+  void _onPreferencesChanged(String key, dynamic newValue) {
+    if (!mounted) return;
+
+    // 只处理服务运行状态的变更
+    if (key.startsWith('server_running_status_')) {
+      final serverId = key.substring('server_running_status_'.length);
+      final isRunning = newValue as bool? ?? false;
+
+      // 更新状态
+      if (_serverRunningStatus[serverId] != isRunning) {
+        if (kDebugMode) {
+          print(
+            '[控制台] 检测到服务状态变更: $serverId = $isRunning (之前: ${_serverRunningStatus[serverId]})',
+          );
+        }
+
+        _serverRunningStatus[serverId] = isRunning;
+        setState(() {});
+      }
     }
   }
 
@@ -243,6 +329,9 @@ class _ConsolePageState extends State<ConsolePage> {
       await _loadServerRunningStatus();
       // 检查所有服务的实际状态（在服务器列表和保存的状态加载完成后）
       await _checkAllServicesActualStatus();
+
+      // 重新启动 SharedPreferences 监控（更新监控的 key 列表）
+      _startPreferencesMonitoring();
     }
   }
 
