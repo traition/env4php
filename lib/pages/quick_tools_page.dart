@@ -4,6 +4,9 @@ import '../tools/hosts_edit_tool.dart';
 import '../tools/mysql_password_reset_tool.dart';
 import '../tools/postgresql_password_reset_tool.dart';
 import '../tools/tcp_ports_tool.dart';
+import 'encode_decode_page.dart';
+import 'encrypt_decrypt_page.dart';
+import 'generator_page.dart';
 
 /// 工具项数据模型
 class _ToolItemData {
@@ -23,7 +26,7 @@ class QuickToolsPage extends StatefulWidget {
 }
 
 class _QuickToolsPageState extends State<QuickToolsPage> {
-  int _selectedTabIndex = 0; // 0: 系统, 1: 编解码, 2: 加解密, 3: 生成器
+  int _selectedTabIndex = 0; // 0: 系统, 1: 编解码, 2: 哈希加密, 3: 生成器
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +48,7 @@ class _QuickToolsPageState extends State<QuickToolsPage> {
               const SizedBox(height: 6),
               _buildTabItem(context, '编解码', 1, Icons.code),
               const SizedBox(height: 6),
-              _buildTabItem(context, '加解密', 2, Icons.lock),
+              _buildTabItem(context, '哈希加密', 2, Icons.lock),
               const SizedBox(height: 6),
               _buildTabItem(context, '生成器', 3, Icons.auto_awesome),
             ],
@@ -101,7 +104,7 @@ class _QuickToolsPageState extends State<QuickToolsPage> {
         return _buildSystemTab(context);
       case 1: // 编解码
         return _buildEncodeDecodeTab(context);
-      case 2: // 加解密
+      case 2: // 哈希加密
         return _buildEncryptDecryptTab(context);
       case 3: // 生成器
         return _buildGeneratorTab(context);
@@ -192,38 +195,17 @@ class _QuickToolsPageState extends State<QuickToolsPage> {
 
   /// 构建编解码 Tab 内容
   Widget _buildEncodeDecodeTab(BuildContext context) {
-    return Center(
-      child: Text(
-        '编解码工具（功能待实现）',
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
+    return const EncodeDecodePage();
   }
 
-  /// 构建加解密 Tab 内容
+  /// 构建哈希加密 Tab 内容
   Widget _buildEncryptDecryptTab(BuildContext context) {
-    return Center(
-      child: Text(
-        '加解密工具（功能待实现）',
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
+    return const EncryptDecryptPage();
   }
 
   /// 构建生成器 Tab 内容
   Widget _buildGeneratorTab(BuildContext context) {
-    return Center(
-      child: Text(
-        '生成器工具（功能待实现）',
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
+    return const GeneratorPage();
   }
 
   /// 构建工具项（两栏布局：左边图标，右边名称）
