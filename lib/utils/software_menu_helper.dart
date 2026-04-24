@@ -166,11 +166,6 @@ class SoftwareMenuHelper {
         label: '编辑 php.ini',
         icon: Icons.edit,
       ));
-      items.add(SoftwareMenuItem(
-        action: SoftwareMenuAction.installPhpExtension,
-        label: '安装扩展',
-        icon: Icons.extension,
-      ));
       items.add(SoftwareMenuItem.divider());
     }
 
@@ -348,16 +343,6 @@ class SoftwareMenuHelper {
           onTap: () {
             Navigator.of(context).pop();
             onAction(SoftwareMenuAction.editPhpIni);
-          },
-        ),
-      );
-      items.add(
-        ListTile(
-          leading: const Icon(Icons.extension),
-          title: const Text('安装扩展'),
-          onTap: () {
-            Navigator.of(context).pop();
-            onAction(SoftwareMenuAction.installPhpExtension);
           },
         ),
       );
